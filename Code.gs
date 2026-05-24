@@ -442,7 +442,7 @@ function apiSetConfig(config) {
 
   // 必要項目の正規化
   var out = getDefaultConfig_();
-  var ruleTemplateIdRaw = String(config.ruleTemplateId || out.ruleTemplateId || '').trim();
+  var ruleTemplateIdRaw = String(config.ruleTemplateId == null ? '' : config.ruleTemplateId).trim();
   // ruleTemplateId が空文字の場合は保存しない（未選択状態）
   if (ruleTemplateIdRaw) {
     out.ruleTemplateId = ruleTemplateIdRaw;
@@ -600,27 +600,9 @@ function apiSetConfig(config) {
   };
 
   var props = getScriptProps_();
-  
-  // ruleTemplateId が空文字の場合は、既存の CONFIG から ruleTemplateId を削除
+
+  // ruleTemplateId が空文字の場合は未選択状態として保存対象から除外する
   if (!ruleTemplateIdRaw) {
-    var existingJson = props.getProperty('CONFIG');
-    if (existingJson) {
-      try {
-        var existing = JSON.parse(existingJson);
-        if (existing && typeof existing === 'object') {
-          delete existing.ruleTemplateId;
-          // 既存の設定をマージ（ruleTemplateId 以外）
-          for (var k in existing) {
-            if (k !== 'ruleTemplateId' && existing.hasOwnProperty(k)) {
-              out[k] = existing[k];
-            }
-          }
-        }
-      } catch (e) {
-        // パースエラーは無視（新規保存として扱う）
-      }
-    }
-    // out から ruleTemplateId を削除（undefined にすることで JSON.stringify で除外）
     delete out.ruleTemplateId;
   }
   
@@ -2140,11 +2122,15 @@ function getRuleSheetOrNull_(sheetName) {
 function readSheetObjects_(sheet) {
   var range = sheet.getDataRange();
   var values = range.getValues();
-  if (!values || values.length < 2) {
+  if (!values || values.length === 0) {
     return { headers: [], rows: [] };
   }
 
   var headers = values[0].map(function (h) { return String(h || '').trim(); });
+  if (values.length < 2) {
+    return { headers: headers, rows: [] };
+  }
+
   var rows = [];
   for (var r = 1; r < values.length; r++) {
     var rowVals = values[r];
