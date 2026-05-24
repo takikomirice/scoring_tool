@@ -1,6 +1,6 @@
 # 採点型紙（Google Apps Script / Spreadsheet）
 
-現在の版: **v0.1.0 公開準備版**
+現在の版: **v1.0.0 候補版**
 
 Googleスプレッドシート上の提出データを読み込み、最大5枠の得点と、最大3枠の講評/改善点を入力して同じシートへ保存するための GAS Webアプリです。
 
@@ -15,6 +15,7 @@ Googleスプレッドシート上の提出データを読み込み、最大5枠�
 - `Code.gs`: サーバーサイド。スプレッドシート読み書き、設定保存、ルール評価APIを担当します。
 - `Index.html`: Webアプリ本体のUIです。
 - `sidebar.html`: スプレッドシート上で使う whenExpr / message式の入力補助ツールです。
+- `samples/template-pack-bio-basic.json`: テンプレパックのサンプルです。
 
 ## セットアップ
 
@@ -49,7 +50,7 @@ Apps Script の「デプロイ」→「新しいデプロイ」→種類「ウ�
 
 ## 採点値入力列の仕様
 
-v0.1.0 では、採点値入力列は次の仕様で確定します。
+v1.0.0 候補では、採点値入力列は次の仕様で確定します。
 
 - 採点値入力列は最大5枠です。
 - 空欄の枠は未使用です。
@@ -57,7 +58,7 @@ v0.1.0 では、採点値入力列は次の仕様で確定します。
 - 列名は trim と大文字化の後に比較されます。例: `aa` と ` AA ` は同じ列として扱います。
 - 重複がある場合は保存時にエラーになります。例: `採点値入力列が重複しています: AA`
 
-統合ルール（重複列を合算・連結して保存する機能）は、v0.1.0 の公開仕様から外しています。リポジトリ内に将来拡張用のコードが残っていても、v0.1.0 の利用手順としては使いません。
+統合ルール（重複列を合算・連結して保存する機能）は、v1.0.0 候補の公開仕様から外しています。リポジトリ内に将来拡張用のコードが残っていても、v1.0.0 候補の利用手順としては使いません。
 
 ## 基本設定
 
@@ -91,33 +92,109 @@ v0.1.0 では、採点値入力列は次の仕様で確定します。
 
 ## 自動講評
 
-自動講評は `_templates` と `_rules` を使います。
+自動講評は `_templates` と `_rules` を使います。直接シートを編集する方法と、JSON形式のテンプレパックをエクスポート/インポートする方法があります。
 
 ### `_templates`
 
 必須列:
 
-- `templateId`: テンプレートID。trim + lowercase で比較します。
-- `enabled`: `1`, `"1"`, `true`, `"true"`, `"TRUE"` が有効です。
+- `templateId`: テンプレートID。trim + lowercase で比較します。許容ヘッダ名は `templateId`, `template` です。
+- `enabled`: 有効フラグです。許容ヘッダ名は `enabled`, `enable`, `active`, `isEnabled`, `isActive` です。値は `1`, `"1"`, `true`, `"true"`, `"TRUE"` が有効です。
 
 推奨列:
 
-- `label`: UI表示名です。
+- `name`: UI表示名です。許容ヘッダ名は `name`, `label`, `title`, `displayName` です。
 
 ### `_rules`
 
 必須列:
 
-- `templateId`: `_templates.templateId` と一致するIDです。
-- `enabled`: 有効フラグです。
-- `priority`: 数値。小さいほど優先されます。
-- `whenExpr`: 条件式です。
-- `message`: 講評本文です。
+- `templateId`: `_templates.templateId` と一致するIDです。許容ヘッダ名は `templateId`, `template` です。
+- `enabled`: 有効フラグです。許容ヘッダ名は `enabled`, `enable`, `active`, `isEnabled`, `isActive` です。
+- `priority`: 数値。小さいほど優先されます。許容ヘッダ名は `priority`, `prio`, `order`, `rank` です。
+- `whenExpr`: 条件式です。許容ヘッダ名は `whenExpr`, `when`, `expr`, `condition`, `if` です。
+- `message`: 講評本文です。許容ヘッダ名は `message`, `text`, `output`, `result`, `comment` です。
 
 任意列:
 
-- `target`: 出力先サブグループ名です。最大3つまで講評/改善点枠に割り当てられます。
-- `visible`: UIの「現在のテンプレ条件」に表示するかどうかを示します。
+- `target`: 出力先サブグループ名です。最大3つまで講評/改善点枠に割り当てられます。許容ヘッダ名は `target`, `dest`, `group`, `outputTarget` です。
+- `visible`: UIの「現在のテンプレ条件」に表示するかどうかを示します。許容ヘッダ名は `visible`, `show`, `display` です。シート上では `1` または `"1"` が表示扱いです。
+
+## テンプレパック
+
+テンプレパックは、`_templates` と `_rules` の行データを配布・再利用するためのJSON形式です。設定画面下部の「テンプレパックのエクスポート/インポート」から操作できます。画面上設定（`CONFIG`）のエクスポート/インポートとは別機能です。
+
+### JSON構造
+
+```json
+{
+  "meta": {
+    "type": "scoring-tool-template-pack",
+    "version": "0.1.0",
+    "name": "テンプレパック名",
+    "exportedAt": "2026-05-24T00:00:00.000Z"
+  },
+  "templates": [
+    {
+      "templateId": "bio_basic",
+      "name": "生物基礎・記述",
+      "enabled": true
+    }
+  ],
+  "rules": [
+    {
+      "templateId": "bio_basic",
+      "target": "講評",
+      "priority": 10,
+      "whenExpr": "score1 + score2 >= 7 and score3 >= 3",
+      "message": "よく書けています。",
+      "enabled": true,
+      "visible": true
+    }
+  ]
+}
+```
+
+### `meta`
+
+| キー | 型 | 説明 |
+| --- | --- | --- |
+| `type` | 文字列 | 固定値 `scoring-tool-template-pack` です。 |
+| `version` | 文字列 | テンプレパック仕様のバージョンです。現在は `0.1.0` です。 |
+| `name` | 文字列 | テンプレパックの表示名です。 |
+| `exportedAt` | 文字列 | ISO形式のエクスポート日時です。 |
+
+### `templates`
+
+| キー | 型 | 対応先 | 説明 |
+| --- | --- | --- | --- |
+| `templateId` | 文字列 | `_templates.templateId` | テンプレートIDです。trim + lowercase で衝突判定します。 |
+| `name` | 文字列 | `_templates.name` | UI表示名です。 |
+| `enabled` | 真偽値 | `_templates.enabled` | テンプレート全体の有効フラグです。 |
+
+### `rules`
+
+| キー | 型 | 対応先 | 説明 |
+| --- | --- | --- | --- |
+| `templateId` | 文字列 | `_rules.templateId` | 所属するテンプレートIDです。`templates` に存在する必要があります。 |
+| `target` | 文字列 | `_rules.target` | 出力先サブグループ名です。最大3種類まで講評/改善点枠に反映されます。 |
+| `priority` | 数値 | `_rules.priority` | 小さい順に評価されます。同じ値の場合はシート上の行順です。 |
+| `whenExpr` | 文字列 | `_rules.whenExpr` | 条件式です。空欄は常にマッチします。 |
+| `message` | 文字列 | `_rules.message` | 講評本文です。先頭が `=` の場合は message式として評価されます。 |
+| `enabled` | 真偽値 | `_rules.enabled` | ルールの有効フラグです。 |
+| `visible` | 真偽値 | `_rules.visible` | 条件一覧への表示フラグです。評価可否には影響しません。インポート時はシートへ `1` / `0` として保存します。 |
+
+### エクスポート
+
+設定画面の「テンプレパックをエクスポート」を押すと、現在の `_templates` と `_rules` をJSONとして出力します。有効・無効の行をどちらも含めます。クリップボードへのコピーを試み、失敗した場合は画面にJSONを表示します。
+
+### インポート
+
+設定画面の「テンプレパックをインポート」からJSONファイルを選択します。取り込み前に確認ダイアログを表示し、検証に通った場合だけ `_templates` と `_rules` へ追記します。シートがない場合は作成し、必要ヘッダがない場合は補完します。
+
+既存の `_templates` に同じ `templateId` がある場合はインポートを中止します。大文字小文字だけが違うIDも同一扱いです。上書きしたい場合は、先に既存行を整理するか、JSON側の `templateId` を変更してください。
+
+サンプルとして `samples/template-pack-bio-basic.json` を用意しています。個人情報や実在生徒のデータは含まず、生物の記述採点で試せる汎用的な内容です。
 
 ## whenExpr の仕様
 
@@ -196,16 +273,16 @@ message式の `+` は数値加算です。文字列をつなぐ場合は `&` を
 - インポート時は現在設定を `CONFIG_BACKUP_LATEST` に1世代バックアップします。
 - 「インポート前に復元」または `apiRestoreLatestConfigBackup()` で直近バックアップへ戻せます。
 - `_templates` / `_rules` シートの行データはエクスポート/インポート対象外です。
-- `config` には内部互換用キーが含まれる場合がありますが、v0.1.0 の公開仕様として統合ルールは使いません。
+- `config` には内部互換用キーが含まれる場合がありますが、v1.0.0 候補の公開仕様として統合ルールは使いません。
 
 ## 保存仕様
 
 - 得点は、列名が空の枠、空欄の入力、列チェックがONの枠は書き込みをスキップします。
 - 採点値入力列に重複がある設定では、`apiSetConfig` と行保存処理の両方でエラーになります。
 - 講評/改善点の指定列は、空文字でも上書き保存します。
-- 設定はスクリプト単位で共有されます。ユーザーごとの設定分離は v0.1.0 では未対応です。
+- 設定はスクリプト単位で共有されます。ユーザーごとの設定分離は v1.0.0 候補では未対応です。
 
-## v0.1.0 で未対応・検討中のこと
+## v1.0.0 候補で未対応・検討中のこと
 
 - 採点値入力列の統合ルール
 - サイドバーの完全な式ビルダー化

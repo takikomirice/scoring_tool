@@ -1462,6 +1462,413 @@ function apiExportConfig() {
   };
 }
 
+// -----------------------------
+// テンプレパック機能
+// -----------------------------
+
+const TEMPLATE_PACK_META_TYPE = 'scoring-tool-template-pack';
+const TEMPLATE_PACK_VERSION = '0.1.0';
+
+function getTemplatePackTemplateHeaderCandidates_() {
+  return {
+    templateId: ['templateid', 'template'],
+    name: ['name', 'label', 'title', 'displayname'],
+    enabled: ['enabled', 'enable', 'active', 'isenabled', 'isactive']
+  };
+}
+
+function getTemplatePackRuleHeaderCandidates_() {
+  return {
+    templateId: ['templateid', 'template'],
+    target: ['target', 'dest', 'group', 'outputtarget'],
+    priority: ['priority', 'prio', 'order', 'rank'],
+    whenExpr: ['whenexpr', 'when', 'expr', 'condition', 'if'],
+    message: ['message', 'text', 'output', 'result', 'comment'],
+    enabled: ['enabled', 'enable', 'active', 'isenabled', 'isactive'],
+    visible: ['visible', 'show', 'display']
+  };
+}
+
+function templatePackRequireHeader_(headers, candidates, sheetName, logicalName) {
+  var key = findKey_(headers || [], candidates);
+  if (!key) {
+    throw new Error('テンプレパックをエクスポートできません: ' + sheetName + ' に ' + logicalName + ' 列が見つかりません');
+  }
+  return key;
+}
+
+function templatePackOptionalHeader_(headers, candidates) {
+  return findKey_(headers || [], candidates);
+}
+
+function templatePackBoolToSheetValue_(v) {
+  return v ? 1 : 0;
+}
+
+function templatePackVisibleToBool_(v, columnExists) {
+  if (!columnExists) return true;
+  if (v === true) return true;
+  if (v === 1) return true;
+  if (v === '1') return true;
+  var s = String(v || '').trim().toLowerCase();
+  return s === 'true';
+}
+
+function buildTemplatePackFromSheetObjects_(templateRes, ruleRes, exportedAt, name) {
+  templateRes = templateRes || { headers: [], rows: [] };
+  ruleRes = ruleRes || { headers: [], rows: [] };
+  var templateCandidates = getTemplatePackTemplateHeaderCandidates_();
+  var ruleCandidates = getTemplatePackRuleHeaderCandidates_();
+
+  var templateIdKey = templatePackRequireHeader_(templateRes.headers, templateCandidates.templateId, '_templates', 'templateId');
+  var templateEnabledKey = templatePackRequireHeader_(templateRes.headers, templateCandidates.enabled, '_templates', 'enabled');
+  var templateNameKey = templatePackOptionalHeader_(templateRes.headers, templateCandidates.name);
+
+  var ruleTemplateIdKey = templatePackRequireHeader_(ruleRes.headers, ruleCandidates.templateId, '_rules', 'templateId');
+  var rulePriorityKey = templatePackRequireHeader_(ruleRes.headers, ruleCandidates.priority, '_rules', 'priority');
+  var ruleWhenKey = templatePackRequireHeader_(ruleRes.headers, ruleCandidates.whenExpr, '_rules', 'whenExpr');
+  var ruleMessageKey = templatePackRequireHeader_(ruleRes.headers, ruleCandidates.message, '_rules', 'message');
+  var ruleEnabledKey = templatePackRequireHeader_(ruleRes.headers, ruleCandidates.enabled, '_rules', 'enabled');
+  var ruleTargetKey = templatePackOptionalHeader_(ruleRes.headers, ruleCandidates.target);
+  var ruleVisibleKey = templatePackOptionalHeader_(ruleRes.headers, ruleCandidates.visible);
+
+  var templates = [];
+  var templateRows = Array.isArray(templateRes.rows) ? templateRes.rows : [];
+  for (var t = 0; t < templateRows.length; t++) {
+    var tr = templateRows[t];
+    if (!tr || typeof tr !== 'object') continue;
+    var tid = String(tr[templateIdKey] == null ? '' : tr[templateIdKey]).trim();
+    if (!tid) continue;
+    templates.push({
+      templateId: tid,
+      name: templateNameKey ? String(tr[templateNameKey] == null ? '' : tr[templateNameKey]).trim() : '',
+      enabled: isEnabled_(tr[templateEnabledKey])
+    });
+  }
+
+  var rules = [];
+  var ruleRows = Array.isArray(ruleRes.rows) ? ruleRes.rows : [];
+  for (var r = 0; r < ruleRows.length; r++) {
+    var rr = ruleRows[r];
+    if (!rr || typeof rr !== 'object') continue;
+    var rtid = String(rr[ruleTemplateIdKey] == null ? '' : rr[ruleTemplateIdKey]).trim();
+    if (!rtid) continue;
+    var priority = toFiniteNumberOrNaN_(rr[rulePriorityKey]);
+    rules.push({
+      templateId: rtid,
+      target: ruleTargetKey ? String(rr[ruleTargetKey] == null ? '' : rr[ruleTargetKey]).trim() : '',
+      priority: isNaN(priority) ? null : priority,
+      whenExpr: String(rr[ruleWhenKey] == null ? '' : rr[ruleWhenKey]).trim(),
+      message: String(rr[ruleMessageKey] == null ? '' : rr[ruleMessageKey]),
+      enabled: isEnabled_(rr[ruleEnabledKey]),
+      visible: templatePackVisibleToBool_(ruleVisibleKey ? rr[ruleVisibleKey] : null, !!ruleVisibleKey)
+    });
+  }
+
+  return {
+    meta: {
+      type: TEMPLATE_PACK_META_TYPE,
+      version: TEMPLATE_PACK_VERSION,
+      name: String(name || 'テンプレパック'),
+      exportedAt: exportedAt && typeof exportedAt.toISOString === 'function' ? exportedAt.toISOString() : new Date().toISOString()
+    },
+    templates: templates,
+    rules: rules
+  };
+}
+
+function ensureTemplatePackString_(v, key) {
+  if (typeof v !== 'string') {
+    throw new Error('テンプレパックが不正です: ' + key + ' は文字列で指定してください');
+  }
+}
+
+function ensureTemplatePackBool_(v, key) {
+  if (typeof v !== 'boolean') {
+    throw new Error('テンプレパックが不正です: ' + key + ' は true/false で指定してください');
+  }
+}
+
+function normalizeTemplatePackPayloadStrict_(payload) {
+  if (!isPlainObject_(payload)) {
+    throw new Error('テンプレパックが不正です: JSONの最上位はオブジェクトで指定してください');
+  }
+  for (var topKey in payload) {
+    if (!payload.hasOwnProperty(topKey)) continue;
+    if (topKey !== 'meta' && topKey !== 'templates' && topKey !== 'rules') {
+      throw new Error('テンプレパックが不正です: top-level の ' + topKey + ' は許可されていません');
+    }
+  }
+  if (!isPlainObject_(payload.meta)) {
+    throw new Error('テンプレパックが不正です: meta はオブジェクトで指定してください');
+  }
+  if (payload.meta.type !== TEMPLATE_PACK_META_TYPE) {
+    throw new Error('テンプレパックが不正です: meta.type は scoring-tool-template-pack を指定してください');
+  }
+  ensureTemplatePackString_(payload.meta.version, 'meta.version');
+  ensureTemplatePackString_(payload.meta.name, 'meta.name');
+  ensureTemplatePackString_(payload.meta.exportedAt, 'meta.exportedAt');
+  if (!Array.isArray(payload.templates)) {
+    throw new Error('テンプレパックが不正です: templates は配列で指定してください');
+  }
+  if (!Array.isArray(payload.rules)) {
+    throw new Error('テンプレパックが不正です: rules は配列で指定してください');
+  }
+
+  var templateIds = {};
+  var templates = [];
+  for (var i = 0; i < payload.templates.length; i++) {
+    var tmpl = payload.templates[i];
+    if (!isPlainObject_(tmpl)) {
+      throw new Error('テンプレパックが不正です: templates[' + i + '] はオブジェクトで指定してください');
+    }
+    var allowedTemplateKeys = { templateId: true, name: true, enabled: true };
+    for (var tk in tmpl) {
+      if (tmpl.hasOwnProperty(tk) && !allowedTemplateKeys[tk]) {
+        throw new Error('テンプレパックが不正です: templates[' + i + '].' + tk + ' は許可されていません');
+      }
+    }
+    ensureTemplatePackString_(tmpl.templateId, 'templates[' + i + '].templateId');
+    ensureTemplatePackString_(tmpl.name, 'templates[' + i + '].name');
+    ensureTemplatePackBool_(tmpl.enabled, 'templates[' + i + '].enabled');
+    var tid = String(tmpl.templateId || '').trim();
+    if (!tid) {
+      throw new Error('テンプレパックが不正です: templates[' + i + '].templateId は空にできません');
+    }
+    var normTid = normalizeTemplateId_(tid);
+    if (templateIds[normTid]) {
+      throw new Error('テンプレパックが不正です: templateId が重複しています: ' + tid);
+    }
+    templateIds[normTid] = tid;
+    templates.push({ templateId: tid, name: String(tmpl.name), enabled: tmpl.enabled });
+  }
+  if (templates.length === 0) {
+    throw new Error('テンプレパックが不正です: templates は1件以上必要です');
+  }
+
+  var rules = [];
+  for (var r = 0; r < payload.rules.length; r++) {
+    var rule = payload.rules[r];
+    if (!isPlainObject_(rule)) {
+      throw new Error('テンプレパックが不正です: rules[' + r + '] はオブジェクトで指定してください');
+    }
+    var allowedRuleKeys = { templateId: true, target: true, priority: true, whenExpr: true, message: true, enabled: true, visible: true };
+    for (var rk in rule) {
+      if (rule.hasOwnProperty(rk) && !allowedRuleKeys[rk]) {
+        throw new Error('テンプレパックが不正です: rules[' + r + '].' + rk + ' は許可されていません');
+      }
+    }
+    ensureTemplatePackString_(rule.templateId, 'rules[' + r + '].templateId');
+    ensureTemplatePackString_(rule.target, 'rules[' + r + '].target');
+    ensureTemplatePackString_(rule.whenExpr, 'rules[' + r + '].whenExpr');
+    ensureTemplatePackString_(rule.message, 'rules[' + r + '].message');
+    ensureTemplatePackBool_(rule.enabled, 'rules[' + r + '].enabled');
+    ensureTemplatePackBool_(rule.visible, 'rules[' + r + '].visible');
+    var ruleTid = String(rule.templateId || '').trim();
+    if (!ruleTid) {
+      throw new Error('テンプレパックが不正です: rules[' + r + '].templateId は空にできません');
+    }
+    if (!templateIds[normalizeTemplateId_(ruleTid)]) {
+      throw new Error('テンプレパックが不正です: rules[' + r + '].templateId は templates に存在しません: ' + ruleTid);
+    }
+    var priority = Number(rule.priority);
+    if (typeof rule.priority !== 'number' || !isFinite(priority)) {
+      throw new Error('テンプレパックが不正です: rules[' + r + '].priority は有限数で指定してください');
+    }
+    rules.push({
+      templateId: ruleTid,
+      target: String(rule.target),
+      priority: priority,
+      whenExpr: String(rule.whenExpr),
+      message: String(rule.message),
+      enabled: rule.enabled,
+      visible: rule.visible
+    });
+  }
+
+  return {
+    meta: {
+      type: TEMPLATE_PACK_META_TYPE,
+      version: payload.meta.version,
+      name: payload.meta.name,
+      exportedAt: payload.meta.exportedAt
+    },
+    templates: templates,
+    rules: rules
+  };
+}
+
+function assertTemplatePackNoTemplateIdConflicts_(pack, existingTemplateIds) {
+  var existing = {};
+  var list = Array.isArray(existingTemplateIds) ? existingTemplateIds : [];
+  for (var i = 0; i < list.length; i++) {
+    var norm = normalizeTemplateId_(list[i]);
+    if (norm) existing[norm] = true;
+  }
+  var conflicts = [];
+  var templates = pack && Array.isArray(pack.templates) ? pack.templates : [];
+  for (var t = 0; t < templates.length; t++) {
+    var tid = templates[t].templateId;
+    if (existing[normalizeTemplateId_(tid)]) conflicts.push(tid);
+  }
+  if (conflicts.length) {
+    throw new Error('既存のtemplateIdと衝突しています: ' + conflicts.join(', ') + '。既存テンプレートを削除するか、templateIdを変更してからインポートしてください');
+  }
+}
+
+function getConfigSpreadsheetForRules_() {
+  var ssId = getConfigSpreadsheetId_();
+  if (!ssId) {
+    try {
+      var active = SpreadsheetApp.getActiveSpreadsheet();
+      if (active) return active;
+    } catch (e) {}
+    throw new Error('設定用スプレッドシートIDが取得できませんでした');
+  }
+  try {
+    return SpreadsheetApp.openById(ssId);
+  } catch (e2) {
+    throw new Error('設定用スプレッドシートを開けませんでした: ' + (e2 && e2.message ? e2.message : e2));
+  }
+}
+
+function resolveTemplatePackImportHeaders_(currentHeaders, candidateMap, canonicalKeys) {
+  var headers = Array.isArray(currentHeaders) ? currentHeaders.slice() : [];
+  var keyMap = {};
+  var keys = canonicalKeys || [];
+  for (var i = 0; i < keys.length; i++) {
+    var canonical = keys[i];
+    var existing = findKey_(headers, candidateMap[canonical] || [normalizeKey_(canonical)]);
+    if (existing) {
+      keyMap[canonical] = existing;
+      continue;
+    }
+    headers.push(canonical);
+    keyMap[canonical] = canonical;
+  }
+  return { headers: headers, keyMap: keyMap };
+}
+
+function ensureSheetWithTemplatePackHeaders_(ss, sheetName, candidateMap, canonicalKeys) {
+  var sheet = ss.getSheetByName(sheetName);
+  if (!sheet) {
+    sheet = ss.insertSheet(sheetName);
+  }
+  var required = canonicalKeys || [];
+  var lastCol = Math.max(sheet.getLastColumn(), required.length);
+  var current = lastCol > 0 ? sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(function (h) { return String(h || '').trim(); }) : [];
+  var hasAnyHeader = false;
+  for (var i = 0; i < current.length; i++) {
+    if (current[i]) {
+      hasAnyHeader = true;
+      break;
+    }
+  }
+  if (!hasAnyHeader) {
+    sheet.getRange(1, 1, 1, required.length).setValues([required]);
+    var initialKeyMap = {};
+    for (var k0 = 0; k0 < required.length; k0++) initialKeyMap[required[k0]] = required[k0];
+    return { sheet: sheet, headers: required.slice(), keyMap: initialKeyMap };
+  }
+  var resolved = resolveTemplatePackImportHeaders_(current, candidateMap || {}, required);
+  sheet.getRange(1, 1, 1, resolved.headers.length).setValues([resolved.headers]);
+  return { sheet: sheet, headers: resolved.headers, keyMap: resolved.keyMap };
+}
+
+function appendObjectsByHeaders_(sheet, headers, objects) {
+  if (!objects || !objects.length) return;
+  var rows = [];
+  for (var i = 0; i < objects.length; i++) {
+    var obj = objects[i];
+    var row = [];
+    for (var h = 0; h < headers.length; h++) {
+      var key = headers[h];
+      row.push(obj.hasOwnProperty(key) ? obj[key] : '');
+    }
+    rows.push(row);
+  }
+  var startRow = sheet.getLastRow() + 1;
+  sheet.getRange(startRow, 1, rows.length, headers.length).setValues(rows);
+}
+
+function readExistingTemplateIds_(sheet) {
+  if (!sheet) return [];
+  var res = readSheetObjects_(sheet);
+  var idKey = findKey_(res.headers, getTemplatePackTemplateHeaderCandidates_().templateId);
+  if (!idKey) return [];
+  var out = [];
+  for (var i = 0; i < res.rows.length; i++) {
+    var tid = String(res.rows[i][idKey] == null ? '' : res.rows[i][idKey]).trim();
+    if (tid) out.push(tid);
+  }
+  return out;
+}
+
+function apiExportTemplatePack() {
+  var templateSheet = getRuleSheetOrNull_('_templates');
+  if (!templateSheet) {
+    throw new Error('テンプレパックをエクスポートできません: _templates シートが見つかりません');
+  }
+  var ruleSheet = getRuleSheetOrNull_('_rules');
+  if (!ruleSheet) {
+    throw new Error('テンプレパックをエクスポートできません: _rules シートが見つかりません');
+  }
+  return buildTemplatePackFromSheetObjects_(
+    readSheetObjects_(templateSheet),
+    readSheetObjects_(ruleSheet),
+    new Date(),
+    'テンプレパック'
+  );
+}
+
+function apiImportTemplatePack(payload) {
+  var pack = normalizeTemplatePackPayloadStrict_(payload);
+  var lock = LockService.getScriptLock();
+  lock.waitLock(5000);
+  try {
+    var ss = getConfigSpreadsheetForRules_();
+    var existingTemplateSheet = ss.getSheetByName('_templates');
+    assertTemplatePackNoTemplateIdConflicts_(pack, readExistingTemplateIds_(existingTemplateSheet));
+
+    var templateKeys = ['templateId', 'name', 'enabled'];
+    var ruleKeys = ['templateId', 'target', 'priority', 'whenExpr', 'message', 'enabled', 'visible'];
+    var templateInfo = ensureSheetWithTemplatePackHeaders_(ss, '_templates', getTemplatePackTemplateHeaderCandidates_(), templateKeys);
+    var ruleInfo = ensureSheetWithTemplatePackHeaders_(ss, '_rules', getTemplatePackRuleHeaderCandidates_(), ruleKeys);
+
+    var templateRows = pack.templates.map(function (t) {
+      var row = {};
+      row[templateInfo.keyMap.templateId] = t.templateId;
+      row[templateInfo.keyMap.name] = t.name;
+      row[templateInfo.keyMap.enabled] = templatePackBoolToSheetValue_(t.enabled);
+      return row;
+    });
+    var ruleRows = pack.rules.map(function (r) {
+      var row = {};
+      row[ruleInfo.keyMap.templateId] = r.templateId;
+      row[ruleInfo.keyMap.target] = r.target;
+      row[ruleInfo.keyMap.priority] = r.priority;
+      row[ruleInfo.keyMap.whenExpr] = r.whenExpr;
+      row[ruleInfo.keyMap.message] = r.message;
+      row[ruleInfo.keyMap.enabled] = templatePackBoolToSheetValue_(r.enabled);
+      row[ruleInfo.keyMap.visible] = templatePackBoolToSheetValue_(r.visible);
+      return row;
+    });
+
+    appendObjectsByHeaders_(templateInfo.sheet, templateInfo.headers, templateRows);
+    appendObjectsByHeaders_(ruleInfo.sheet, ruleInfo.headers, ruleRows);
+    return {
+      ok: true,
+      imported: {
+        templates: templateRows.length,
+        rules: ruleRows.length
+      },
+      templateIds: pack.templates.map(function (t) { return t.templateId; })
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 function isValidColA1OrEmpty_(v) {
   var s = String(v == null ? '' : v).trim();
   return s === '' || /^[A-Za-z]+$/.test(s);

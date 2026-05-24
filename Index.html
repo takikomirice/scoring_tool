@@ -1028,6 +1028,15 @@
               <input id="importConfigFileInput" type="file" accept=".json,.txt,application/json,text/plain" style="display:none;" />
               <div id="exportResult" style="margin-top:8px; font-size:12px; color:#666; display:none; white-space:pre-wrap; word-break:break-all;"></div>
             </div>
+            <div style="margin-top:12px; padding-top:12px; border-top:1px solid var(--line-soft);">
+              <div style="font-size:13px; font-weight:900; margin-bottom:8px;">テンプレパックのエクスポート/インポート</div>
+              <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                <button id="exportTemplatePackBtn" type="button">テンプレパックをエクスポート</button>
+                <button id="importTemplatePackBtn" type="button">テンプレパックをインポート</button>
+              </div>
+              <input id="importTemplatePackFileInput" type="file" accept=".json,.txt,application/json,text/plain" style="display:none;" />
+              <div id="templatePackResult" style="margin-top:8px; font-size:12px; color:#666; display:none; white-space:pre-wrap; word-break:break-all;"></div>
+            </div>
           </div>
       </section>
     </div>
@@ -1176,6 +1185,10 @@
         els.restoreConfigBtn = $('restoreConfigBtn');
         els.importConfigFileInput = $('importConfigFileInput');
         els.exportResult = $('exportResult');
+        els.importTemplatePackBtn = $('importTemplatePackBtn');
+        els.exportTemplatePackBtn = $('exportTemplatePackBtn');
+        els.importTemplatePackFileInput = $('importTemplatePackFileInput');
+        els.templatePackResult = $('templatePackResult');
         els.spreadsheetUrlInput = $('spreadsheetUrlInput');
         els.loadSpreadsheetBtn = $('loadSpreadsheetBtn');
         els.openTargetSpreadsheetBtn = $('openTargetSpreadsheetBtn');
@@ -1525,6 +1538,21 @@
         if (els.exportConfigBtn) {
           els.exportConfigBtn.addEventListener('click', function () {
             exportConfig();
+          });
+        }
+        if (els.importTemplatePackBtn) {
+          els.importTemplatePackBtn.addEventListener('click', function () {
+            if (!els.importTemplatePackFileInput) return;
+            els.importTemplatePackFileInput.value = '';
+            els.importTemplatePackFileInput.click();
+          });
+        }
+        if (els.importTemplatePackFileInput) {
+          els.importTemplatePackFileInput.addEventListener('change', handleImportTemplatePackFile_);
+        }
+        if (els.exportTemplatePackBtn) {
+          els.exportTemplatePackBtn.addEventListener('click', function () {
+            exportTemplatePack();
           });
         }
         if (els.restoreConfigBtn) {
@@ -5096,6 +5124,48 @@
           .apiExportConfig();
       }
 
+      function showTemplatePackResult_(text, color) {
+        if (!els.templatePackResult) return;
+        els.templatePackResult.textContent = text;
+        els.templatePackResult.style.display = 'block';
+        els.templatePackResult.style.color = color || '#666';
+      }
+
+      function copyTextForExport_(text) {
+        var textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        try {
+          document.execCommand('copy');
+          return true;
+        } catch (e) {
+          return false;
+        } finally {
+          document.body.removeChild(textarea);
+        }
+      }
+
+      function exportTemplatePack() {
+        showTemplatePackResult_('テンプレパックをエクスポート中...', '#666');
+
+        google.script.run
+          .withSuccessHandler(function (result) {
+            var json = JSON.stringify(result, null, 2);
+            if (copyTextForExport_(json)) {
+              showTemplatePackResult_('テンプレパックのエクスポート完了（クリップボードにコピーしました）', '#2e7d32');
+            } else {
+              showTemplatePackResult_('テンプレパックのエクスポート完了（コピーに失敗しました。下記を手動でコピーしてください）:\n\n' + json, '#666');
+            }
+          })
+          .withFailureHandler(function (err) {
+            showTemplatePackResult_('テンプレパックのエクスポートエラー: ' + (err && err.message ? err.message : err), '#d32f2f');
+          })
+          .apiExportTemplatePack();
+      }
+
       function handleImportConfigFile_(ev) {
         var file = ev && ev.target && ev.target.files && ev.target.files[0] ? ev.target.files[0] : null;
         if (!file) return;
@@ -5137,6 +5207,48 @@
           els.exportResult.textContent = 'インポートエラー: ファイルを読み込めませんでした';
           els.exportResult.style.display = 'block';
           els.exportResult.style.color = '#d32f2f';
+        };
+        reader.readAsText(file, 'UTF-8');
+      }
+
+      function handleImportTemplatePackFile_(ev) {
+        var file = ev && ev.target && ev.target.files && ev.target.files[0] ? ev.target.files[0] : null;
+        if (!file) return;
+
+        var reader = new FileReader();
+        reader.onload = function (e) {
+          var text = String((e && e.target && e.target.result) || '');
+          var payload = null;
+          try {
+            payload = JSON.parse(text);
+          } catch (err) {
+            showTemplatePackResult_('テンプレパックのインポートエラー: JSONの形式が不正です', '#d32f2f');
+            return;
+          }
+
+          if (!window.confirm('テンプレパックを _templates / _rules に追加します。同じtemplateIdが既にある場合は取り込みません。続行しますか？')) {
+            return;
+          }
+
+          showTemplatePackResult_('テンプレパックをインポート中...', '#666');
+
+          google.script.run
+            .withSuccessHandler(function (res) {
+              var imported = res && res.imported ? res.imported : { templates: 0, rules: 0 };
+              showTemplatePackResult_(
+                'テンプレパックのインポート完了: テンプレート ' + imported.templates + ' 件、ルール ' + imported.rules + ' 件',
+                '#2e7d32'
+              );
+              var currentTemplateId = state.config && state.config.ruleTemplateId ? state.config.ruleTemplateId : '';
+              loadRuleTemplates_(currentTemplateId);
+            })
+            .withFailureHandler(function (err2) {
+              showTemplatePackResult_('テンプレパックのインポートエラー: ' + (err2 && err2.message ? err2.message : err2), '#d32f2f');
+            })
+            .apiImportTemplatePack(payload);
+        };
+        reader.onerror = function () {
+          showTemplatePackResult_('テンプレパックのインポートエラー: ファイルを読み込めませんでした', '#d32f2f');
         };
         reader.readAsText(file, 'UTF-8');
       }
