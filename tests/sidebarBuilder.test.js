@@ -82,6 +82,19 @@ function loadSidebarHooks() {
   return windowObj.__sidebarBuilderTestHooks;
 }
 
+test('sidebarは3モードと折りたたみを持つ情報設計にする', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'sidebar.html'), 'utf8');
+
+  assert.match(html, /条件を作る/);
+  assert.match(html, /文言を作る/);
+  assert.match(html, /手入力・部品/);
+  assert.match(html, /<details[\s>]/);
+  assert.match(html, /<summary>部品を直接挿入<\/summary>/);
+  assert.match(html, /<summary>式の書き方・例<\/summary>/);
+  assert.match(html, /<summary>上級者向け<\/summary>/);
+  assert.match(html, /<summary>map\/変換表の説明<\/summary>/);
+});
+
 test('条件式ビルダーは whenExpr 評価器が受け付けるDSLを生成する', () => {
   const hooks = loadSidebarHooks();
 
@@ -90,7 +103,7 @@ test('条件式ビルダーは whenExpr 評価器が受け付けるDSLを生成�
       { join: '', left: 'score1 + score2', op: '>=', right: '7', not: false },
       { join: 'and', left: 'score3', op: '>=', right: '3', not: false }
     ]),
-    'score1 + score2 >= 7 and score3 >= 3'
+    '(score1 + score2) >= 7 and score3 >= 3'
   );
   assert.equal(
     hooks.buildConditionDslFromRows_([
@@ -100,24 +113,26 @@ test('条件式ビルダーは whenExpr 評価器が受け付けるDSLを生成�
   );
 });
 
-test('文言式ビルダーは label と map を使う message式を生成する', () => {
+test('文言式ビルダーは label と点数変換を使う message式を生成する', () => {
   const hooks = loadSidebarHooks();
 
   assert.equal(
     hooks.buildMessageDslFromParts_([
+      { type: 'text', value: '観点「' },
       { type: 'label', value: 'label1' },
-      { type: 'text', value: '：' },
+      { type: 'text', value: '」は' },
       {
-        type: 'map',
+        type: 'conversion',
         source: 'score1',
         entries: [
           { key: '1', value: '要確認' },
           { key: '2', value: '改善中' },
           { key: '3', value: '良好' }
         ]
-      }
+      },
+      { type: 'text', value: 'です。' }
     ]),
-    '=label1 & "：" & map(score1,"1=要確認,2=改善中,3=良好")'
+    '="観点「" & label1 & "」は" & map(score1,"1=要確認,2=改善中,3=良好") & "です。"'
   );
 });
 
