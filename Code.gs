@@ -1777,6 +1777,19 @@ function findKey_(headers, normalizedCandidates) {
   return '';
 }
 
+function findRuleMessageKey_(headers) {
+  var candidates = ['message', 'text', 'output', 'result', 'comment'];
+  var list = Array.isArray(headers) ? headers : [];
+  for (var c = 0; c < candidates.length; c++) {
+    for (var i = 0; i < list.length; i++) {
+      var h = list[i];
+      if (!h) continue;
+      if (normalizeKey_(h) === candidates[c]) return h;
+    }
+  }
+  return '';
+}
+
 /**
  * enabled の値を true/false に解釈（型ブレ対策）
  * true扱い: 1, "1", true, "true", "TRUE"（大小文字無視）
@@ -1967,9 +1980,9 @@ function apiGetRules(params) {
  * 
  * 2. 数値
  *    - パターン: [0-9]+(\.[0-9]+)?
- *    - 整数: 123, 0, -5
- *    - 小数: 3.14, 0.5, -2.5
- *    - 注意: 負数は先頭に - を付ける（単項演算子として扱われる可能性あり）
+ *    - 整数: 123, 0
+ *    - 小数: 3.14, 0.5
+ *    - 注意: 負数、減算、乗算、除算は v1.0.0 候補では未対応
  * 
  * 3. 文字列
  *    - パターン: "..." または '...'
@@ -1980,18 +1993,20 @@ function apiGetRules(params) {
  * 4. 演算子
  *    - 等価: ==, !=
  *    - 比較: <, <=, >, >=
- *    - 論理: && (AND), || (OR), ! (NOT)
- *    - 代替表記: and (&& の代替), or (|| の代替), not (! の代替) ※未実装の可能性あり
+ *    - 加算: +（数値として解釈できない値は 0 扱い）
+ *    - 論理: and (AND), or (OR), not (NOT)
+ *    - 互換表記: && (AND), || (OR), ! (NOT)
  * 
  * 5. 括弧
  *    - ( ) : グループ化と優先順位の変更
  * 
  * ===== 優先順位（高い順） =====
  * 
- * 1. NOT (!)
- * 2. 比較演算子 (<, <=, >, >=, ==, !=)
- * 3. AND (&&)
- * 4. OR (||)
+ * 1. NOT (! / not)
+ * 2. 加算 (+)
+ * 3. 比較演算子 (<, <=, >, >=, ==, !=)
+ * 4. AND (&& / and)
+ * 5. OR (|| / or)
  * 
  * 例: !a && b || c は ((!a) && b) || c と等価
  * 
@@ -2010,9 +2025,9 @@ function apiGetRules(params) {
  * 
  * 3. 未定義変数
  *    - getVarByPath_ で取得できない変数は undefined を返す
- *    - undefined は toBoolean_ で false に変換される
- *    - 比較時は空文字列として扱われる
- *    - 仕様: 未定義変数は null 扱い（将来的に統一する可能性あり）
+ *    - 評価時はサーバー/クライアントとも null に揃える
+ *    - null は toBoolean_ で false に変換される
+ *    - 正式変数以外の利用は推奨しない
  * 
  * 4. 型変換ルール
  *    - toBoolean_(v):
@@ -2021,17 +2036,21 @@ function apiGetRules(params) {
  *      * 数値: NaN または 0 → false, それ以外 → true
  *      * 文字列: 空文字列（trim後） → false, それ以外 → true
  *      * その他 → true
+ *
+ * 5. total
+ *    - score1〜score5 の合計値
+ *    - 数値として解釈できる値だけ加算し、未入力や非数値は 0 として扱う
  * 
  * ===== 使用例 =====
  * 
  * - score1 >= 5 && score2 < 3
  * - !(score1 == 0 && score2 == 0)
- * - score1 + score2 >= 10  ※ 注意: + は未対応（数値演算は未実装）
- * - total >= 24  ※ total は未定義変数の場合 null/undefined 扱い
+ * - score1 + score2 >= 10
+ * - total >= 24
  * 
  * ===== 実装上の注意 =====
  * 
- * - パーサーは再帰下降パーサー（parseOr_ → parseAnd_ → parseUnary_ → parseComparison_ → parsePrimary_）
+ * - パーサーは再帰下降パーサー（parseOr_ → parseAnd_ → parseUnary_ → parseComparison_ → parseAddition_ → parsePrimary_）
  * - トークン化は tokenizeWhenExpr_ で行う
  * - 評価は evalWhenExpr_ で行う
  * - エラー時は例外を投げる（呼び出し側でキャッチして invalidExpr としてカウント）
@@ -2070,6 +2089,24 @@ function toNumberIfNumeric_(v) {
     if (/^-?\d+(\.\d+)?$/.test(s)) return Number(s);
   }
   return NaN;
+}
+
+function toNumberForArithmetic_(v) {
+  var n = toNumberIfNumeric_(v);
+  return isNaN(n) ? 0 : n;
+}
+
+function computeWhenExprTotal_(vars) {
+  var sum = 0;
+  for (var i = 1; i <= 5; i++) {
+    sum += toNumberForArithmetic_(getVarByPath_(vars || {}, 'score' + i));
+  }
+  return sum;
+}
+
+function getWhenExprVar_(vars, name) {
+  if (String(name || '') === 'total') return computeWhenExprTotal_(vars || {});
+  return getVarByPath_(vars || {}, name);
 }
 
 function compare_(a, op, b) {
@@ -2141,7 +2178,7 @@ function tokenizeWhenExpr_(src) {
       i++;
       continue;
     }
-    if (ch === '!' || ch === '>' || ch === '<') {
+    if (ch === '!' || ch === '>' || ch === '<' || ch === '+') {
       push('op', ch);
       i++;
       continue;
@@ -2195,9 +2232,13 @@ function tokenizeWhenExpr_(src) {
       i++;
       while (i < src.length && /[A-Za-z0-9_.]/.test(src[i])) i++;
       var id = src.slice(s, i);
-      if (id === 'true') push('bool', true);
-      else if (id === 'false') push('bool', false);
-      else if (id === 'null') push('null', null);
+      var normalizedId = id.toLowerCase();
+      if (normalizedId === 'and') push('op', '&&');
+      else if (normalizedId === 'or') push('op', '||');
+      else if (normalizedId === 'not') push('op', '!');
+      else if (normalizedId === 'true') push('bool', true);
+      else if (normalizedId === 'false') push('bool', false);
+      else if (normalizedId === 'null') push('null', null);
       else push('id', id);
       continue;
     }
@@ -2212,10 +2253,10 @@ function tokenizeWhenExpr_(src) {
  * 【whenExpr DSL 評価器】
  * 仕様に基づいて式を評価する（再帰下降パーサー）
  * 
- * 優先順位: NOT > 比較 > AND > OR
+ * 優先順位: NOT > 加算 > 比較 > AND > OR
  * 
  * @param {string} expr - 評価する式
- * @param {Object} vars - 変数辞書（score1..score5 など）
+ * @param {Object} vars - 変数辞書（score1..score5 など。total は score1..5 から自動計算）
  * @return {boolean} 評価結果
  * @throws {Error} 構文エラー時
  */
@@ -2268,12 +2309,22 @@ function evalWhenExpr_(expr, vars) {
 
   // 比較: 優先順位2
   function parseComparison_() {
-    var left = parsePrimary_();
+    var left = parseAddition_();
     var t = peek_();
     if (t && t.t === 'op' && (t.v === '==' || t.v === '!=' || t.v === '>=' || t.v === '<=' || t.v === '>' || t.v === '<')) {
       var op = next_().v;
-      var right = parsePrimary_();
+      var right = parseAddition_();
       return compare_(left, op, right);
+    }
+    return left;
+  }
+
+  // 加算: 左結合、数値として解釈できない値は 0 扱い
+  function parseAddition_() {
+    var left = parsePrimary_();
+    while (matchOp_('+')) {
+      var right = parsePrimary_();
+      left = toNumberForArithmetic_(left) + toNumberForArithmetic_(right);
     }
     return left;
   }
@@ -2291,9 +2342,9 @@ function evalWhenExpr_(expr, vars) {
     t = next_();
     if (t.t === 'num' || t.t === 'str' || t.t === 'bool' || t.t === 'null') return t.v;
     if (t.t === 'id') {
-      // 未定義変数は undefined を返す（null 扱い）
-      var value = getVarByPath_(vars, t.v);
-      return value;
+      // 未定義変数は null 扱い。total は score1〜score5 から都度計算する。
+      var value = getWhenExprVar_(vars, t.v);
+      return (value === undefined) ? null : value;
     }
     throw new Error('unexpected token');
   }
@@ -2385,7 +2436,7 @@ function apiApplyRules(params) {
     var res = readSheetObjects_(sheet);
     var templateIdKey = findKey_(res.headers, ['templateid', 'template']);
     var whenKey = findKey_(res.headers, ['whenexpr', 'when', 'expr', 'condition', 'if']);
-    var textKey = findKey_(res.headers, ['message']);
+    var textKey = findRuleMessageKey_(res.headers);
     var enabledKey = findKey_(res.headers, ['enabled', 'enable', 'active', 'isenabled', 'isactive']);
     var priorityKey = findKey_(res.headers, ['priority', 'prio', 'order', 'rank']);
 
@@ -2416,7 +2467,7 @@ function apiApplyRules(params) {
         text: '',
         matched: false,
         skipped: { disabled: 0, invalidPriority: 0, invalidExpr: 0, invalidRow: 0 },
-        error: 'text column not found in _rules'
+        error: 'message column not found in _rules'
       };
     }
     if (!enabledKey) {

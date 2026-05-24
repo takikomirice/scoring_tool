@@ -61,10 +61,10 @@
   <div class="group">
     <div class="title">数字ルール（メモ）</div>
     <div class="hint">
-      ・whenExpr: `score1 >= 3 && score2 < 5` のように score1〜score5 の比較・論理条件を書く<br>
+      ・whenExpr: `score1 + score2 >= 7 and score3 >= 3` のように score1〜score5 / total の比較・論理条件を書く<br>
       ・message式: 先頭を `=` にして式評価（例: `=label1 & "：" & map(score1,"1=×,2=△,3=○")`）<br>
       ・連結は `&` を使用（文字列は `"..."`）<br>
-      ・message式の `+` は数値加算。whenExprの加算条件は v0.1.0 では正式仕様外<br>
+      ・`+` は数値加算。whenExpr の論理は `and` / `or` / `not` 推奨（`&&` / `||` / `!` も互換）<br>
       ・先頭を `'` にすると文字列として扱う（例: `'=score1+score2`）
     </div>
   </div>
@@ -138,8 +138,8 @@
     { label: 'score3', token: 'score3' },
     { label: 'score4', token: 'score4' },
     { label: 'score5', token: 'score5' },
-    // 合計は実変数ではなく、message式向けのショートカットとして挿入する
-    { label: '合計(message)', token: '(score1 + score2 + score3 + score4 + score5)' },
+    { label: 'total(when)', token: 'total' },
+    { label: '合計(message)', token: 'score1+score2+score3+score4+score5' },
     { label: '連結', token: ' & ""' },
     { label: '置換', token: 'map(score1,"1=×,2=△,3=○")' },
   ];
@@ -154,10 +154,10 @@
   ];
 
   const LOGICS = [
-    { label: 'AND', token: ' && ' },
-    { label: 'OR', token: ' || ' },
-    // NOT は事故りやすいので !( を推奨
-    { label: 'NOT', token: '!(' },
+    { label: 'AND', token: ' and ' },
+    { label: 'OR', token: ' or ' },
+    // NOT は事故りやすいので not( を推奨
+    { label: 'NOT', token: 'not(' },
   ];
 
   const PARENS = [
