@@ -95,6 +95,15 @@ test('sidebarは3モードと折りたたみを持つ情報設計にする', () 
   assert.match(html, /<summary>map\/変換表の説明<\/summary>/);
 });
 
+test('sidebarはGoogle Sheetsのサイドバー幅向けに表示密度を抑える', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'sidebar.html'), 'utf8');
+
+  assert.match(html, /body \{[^}]*margin: 6px;[^}]*font-size: 13px;/);
+  assert.match(html, /\.panel \{[^}]*border: 0;[^}]*padding: 0;/);
+  assert.match(html, /\.message-grid \{[^}]*grid-template-columns: 64px 1fr;/);
+  assert.match(html, /id="pasteBtn"[^>]*title="選択セルに貼り付けて1行下へ移動"[^>]*>セルへ貼付 ↓<\/button>/);
+});
+
 test('条件式ビルダーは whenExpr 評価器が受け付けるDSLを生成する', () => {
   const hooks = loadSidebarHooks();
 

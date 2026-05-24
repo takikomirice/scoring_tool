@@ -16,6 +16,86 @@ function plain(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
+class MockRange {
+  constructor(sheet, row, col, numRows, numCols) {
+    this.sheet = sheet;
+    this.row = row;
+    this.col = col;
+    this.numRows = numRows;
+    this.numCols = numCols;
+  }
+
+  getValues() {
+    const rows = [];
+    for (let r = 0; r < this.numRows; r++) {
+      const values = [];
+      for (let c = 0; c < this.numCols; c++) {
+        values.push(this.sheet.getCell(this.row + r, this.col + c));
+      }
+      rows.push(values);
+    }
+    return rows;
+  }
+
+  setValues(rows) {
+    for (let r = 0; r < rows.length; r++) {
+      for (let c = 0; c < rows[r].length; c++) {
+        this.sheet.setCell(this.row + r, this.col + c, rows[r][c]);
+      }
+    }
+  }
+}
+
+class MockSheet {
+  constructor(name, rows) {
+    this.name = name;
+    this.rows = rows ? rows.map((row) => row.slice()) : [];
+  }
+
+  getLastColumn() {
+    return this.rows.reduce((max, row) => Math.max(max, row.length), 0);
+  }
+
+  getRange(row, col, numRows, numCols) {
+    return new MockRange(this, row, col, numRows, numCols);
+  }
+
+  getCell(row, col) {
+    const r = this.rows[row - 1] || [];
+    return r[col - 1] == null ? '' : r[col - 1];
+  }
+
+  setCell(row, col, value) {
+    while (this.rows.length < row) this.rows.push([]);
+    const r = this.rows[row - 1];
+    while (r.length < col) r.push('');
+    r[col - 1] = value;
+  }
+}
+
+class MockSpreadsheet {
+  constructor(sheets) {
+    this.sheets = {};
+    Object.keys(sheets || {}).forEach((name) => {
+      this.sheets[name] = new MockSheet(name, sheets[name]);
+    });
+  }
+
+  getId() {
+    return 'mock-config-spreadsheet';
+  }
+
+  getSheetByName(name) {
+    return this.sheets[name] || null;
+  }
+
+  insertSheet(name) {
+    const sheet = new MockSheet(name, []);
+    this.sheets[name] = sheet;
+    return sheet;
+  }
+}
+
 test('テンプレパックは既存ヘッダの別名から標準JSONへ変換できる', () => {
   const gas = loadCodeGs();
   const pack = gas.buildTemplatePackFromSheetObjects_(
@@ -154,5 +234,56 @@ test('インポート用ヘッダは既存の許容別名を追記先として�
     message: 'text',
     enabled: 'active',
     visible: 'show'
+  });
+});
+
+test('apiEnsureRuleSheetsはルール用シートを作成し既存の別名ヘッダを尊重して補完する', () => {
+  const gas = loadCodeGs();
+  const ss = new MockSpreadsheet({
+    _templates: [
+      ['template', 'label'],
+      ['bio_basic', '生物基礎']
+    ]
+  });
+  gas.SpreadsheetApp = {
+    getActiveSpreadsheet() {
+      return ss;
+    },
+    openById() {
+      return ss;
+    }
+  };
+  gas.LockService = {
+    getScriptLock() {
+      return {
+        waitLock() {},
+        releaseLock() {}
+      };
+    }
+  };
+
+  const result = gas.apiEnsureRuleSheets();
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(ss.getSheetByName('_templates').rows, [
+    ['template', 'label', 'enabled'],
+    ['bio_basic', '生物基礎']
+  ]);
+  assert.deepEqual(ss.getSheetByName('_rules').rows, [
+    ['templateId', 'target', 'priority', 'whenExpr', 'message', 'enabled', 'visible']
+  ]);
+  assert.deepEqual(plain(result.templates.keyMap), {
+    templateId: 'template',
+    name: 'label',
+    enabled: 'enabled'
+  });
+  assert.deepEqual(plain(result.rules.keyMap), {
+    templateId: 'templateId',
+    target: 'target',
+    priority: 'priority',
+    whenExpr: 'whenExpr',
+    message: 'message',
+    enabled: 'enabled',
+    visible: 'visible'
   });
 });

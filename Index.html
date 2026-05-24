@@ -1010,7 +1010,8 @@
             </div>
 
             <label>ルール編集</label>
-            <div>
+            <div style="display:flex; gap:8px; flex-wrap:wrap;">
+              <button id="ensureRuleSheetsBtn" type="button">ルール用シートを準備</button>
               <button id="openRulesBtn" type="button">ルール（設定用スプシ）を開く</button>
             </div>
             
@@ -1176,6 +1177,7 @@
         els.commentColInput = els.ruleOutColInputs[0];
         els.ruleTemplateSelect = $('ruleTemplateSelect');
         els.reloadTemplatesBtn = $('reloadTemplatesBtn');
+        els.ensureRuleSheetsBtn = $('ensureRuleSheetsBtn');
         els.openRulesBtn = $('openRulesBtn');
         els.saveConfigBtn = $('saveConfigBtn');
         els.settingsStatus = $('settingsStatus');
@@ -1506,6 +1508,11 @@
         if (els.openRulesBtn) {
           els.openRulesBtn.addEventListener('click', function () {
             openRulesSpreadsheet_(els.settingsStatus);
+          });
+        }
+        if (els.ensureRuleSheetsBtn) {
+          els.ensureRuleSheetsBtn.addEventListener('click', function () {
+            ensureRuleSheetsFromSettings_();
           });
         }
         els.saveConfigBtn.addEventListener('click', saveConfig);
@@ -5168,6 +5175,29 @@
             showTemplatePackResult_('テンプレパックのエクスポートエラー: ' + (err && err.message ? err.message : err), '#d32f2f');
           })
           .apiExportTemplatePack();
+      }
+
+      function ensureRuleSheetsFromSettings_() {
+        if (els.settingsStatus) {
+          els.settingsStatus.textContent = 'ルール用シートを準備中...';
+          els.settingsStatus.style.color = '#666';
+        }
+
+        google.script.run
+          .withSuccessHandler(function () {
+            if (els.settingsStatus) {
+              els.settingsStatus.textContent = '_templates と _rules のヘッダを準備しました';
+              els.settingsStatus.style.color = '#2e7d32';
+            }
+            var currentTemplateId = state.config && state.config.ruleTemplateId ? state.config.ruleTemplateId : '';
+            loadRuleTemplates_(currentTemplateId);
+          })
+          .withFailureHandler(function (err) {
+            if (!els.settingsStatus) return;
+            els.settingsStatus.textContent = 'ルール用シートの準備エラー: ' + (err && err.message ? err.message : err);
+            els.settingsStatus.style.color = '#d32f2f';
+          })
+          .apiEnsureRuleSheets();
       }
 
       function handleImportConfigFile_(ev) {
