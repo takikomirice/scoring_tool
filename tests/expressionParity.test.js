@@ -110,6 +110,20 @@ test('クライアントの total は非数値スコアをサーバー同様に0
   }
 });
 
+test('サーバーとクライアントは whenExpr の未閉じ文字列を構文エラーにする', () => {
+  const gas = loadCodeGs();
+  const client = loadClientHooks();
+  const vars = client.buildRuleVars_(['3', '', '', '', '']);
+  const evalVars = client.buildEvalVars(vars);
+
+  assert.throws(
+    () => gas.evalWhenExpr_('score1 == "3', { score1: 3 }),
+    /string|文字列|unterminated/i
+  );
+  const clientResult = client.evaluateWhenExprSafe('score1 == "3', evalVars);
+  assert.equal(clientResult.ok, false);
+});
+
 test('サーバーとクライアントは _rules.message 列を本文列として優先する', () => {
   const gas = loadCodeGs();
   const client = loadClientHooks();
@@ -141,4 +155,28 @@ test('クライアントの message式はサーバーと同じ結果を返す', 
       message
     );
   }
+});
+
+test('targetごとの複数出力評価はサーバーとクライアントで一致する', () => {
+  const gas = loadCodeGs();
+  const client = loadClientHooks();
+  const headers = ['target', 'whenExpr', 'message', 'enabled'];
+  const rules = [
+    { target: '改善点', whenExpr: 'score1 >= 3', message: '改善点は次の課題へ進みましょう。', enabled: 1, _rowNumber: 2 },
+    { target: '講評', whenExpr: 'score1 >= 3', message: '=map(score1,"3=良好")', enabled: 1, _rowNumber: 3 },
+    { target: '講評', whenExpr: '', message: '予備コメント', enabled: 1, _rowNumber: 4 }
+  ];
+  const slots = [
+    { target: '講評', enabled: true },
+    { target: '改善点', enabled: true },
+    { target: '', enabled: false }
+  ];
+  const vars = client.buildRuleVars_(['3', '', '', '', '']);
+  const evalVars = client.buildEvalVars(vars);
+  const serverVars = { score1: 3, score2: null, score3: null, score4: null, score5: null };
+
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(gas.evaluateRulesByTarget_(rules, headers, serverVars, slots, []))),
+    JSON.parse(JSON.stringify(client.evaluateRulesLocallyMulti_(rules, headers, evalVars, slots)))
+  );
 });

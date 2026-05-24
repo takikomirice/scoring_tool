@@ -3009,6 +3009,8 @@
       }
 
       function evaluateRuleMessageLocal_(rawText, evalVars, slotLabels) {
+        // サーバー側 evaluateRuleMessage_ と同じ仕様。
+        // & / label / map を使う新構文と + の単純加算は同一式内で混在させない。
         var original = (rawText === null || rawText === undefined) ? '' : String(rawText);
         var trimmed = original.trim();
         if (!trimmed) return '';
@@ -3230,6 +3232,7 @@
             var quote = ch;
             i++;
             var out = '';
+            var closed = false;
             while (i < expr.length) {
               var c = expr[i];
               if (c === '\\') {
@@ -3245,12 +3248,13 @@
               }
               if (c === quote) {
                 i++;
+                closed = true;
                 break;
               }
               out += c;
               i++;
             }
-            if (i > expr.length) {
+            if (!closed) {
               throw new Error('文字列が閉じられていません');
             }
             push('string', out);
@@ -5407,6 +5411,7 @@
           computeMerge_: computeMerge_,
           evaluateRuleMessageLocal_: evaluateRuleMessageLocal_,
           evaluateWhenExprSafe: evaluateWhenExprSafe,
+          evaluateRulesLocallyMulti_: evaluateRulesLocallyMulti_,
           findRuleMessageKey_: findRuleMessageKey_,
           parseWhenExpr: parseWhenExpr,
           tokenizeWhenExpr: tokenizeWhenExpr

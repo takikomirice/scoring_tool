@@ -77,7 +77,7 @@ function getDefaultConfig_() {
     charCountCols: [],
     scoreCols: ['AA', 'AB', 'AC', 'AD', 'AE'],
     scoreHeaders: ['', '', '', '', ''],
-    // 旧互換用。v0.1.0の公開仕様では使用しない。
+    // 旧互換用。v1.0.0候補の公開仕様では使用しない。
     mergeRules: {},
     // スコア入力ロック（列チェック）
     colChecks: [false, false, false, false, false],
@@ -536,7 +536,7 @@ function apiSetConfig(config) {
   out.ruleOutputSlots = normalizeRuleOutputSlots_(config.ruleOutputSlots);
   out.flushShortcut = String(config.flushShortcut || out.flushShortcut || 'Ctrl+S').trim();
   
-  // 旧互換用。v0.1.0の公開仕様では使用しない。
+  // 旧互換用。v1.0.0候補の公開仕様では使用しない。
   out.mergeRules = normalizeMergeRules_(config.mergeRules);
 
   // displayCols / displayHeaders を5に正規化
@@ -1422,6 +1422,7 @@ function evaluateMergeRule_(rule, slotValues, slotLabels, varsRaw) {
  * _rules の本文を評価する。
  * - 通常文: そのまま返す
  * - "=..." で始まる場合: 統合DSLとして評価して文字列化
+ * - 現行DSLでは、& / label / map を使う新構文と + の単純加算を同一式内で混在させない
  */
 function evaluateRuleMessage_(rawText, vars, slotLabels) {
   var original = (rawText === null || rawText === undefined) ? '' : String(rawText);
@@ -2596,6 +2597,7 @@ function tokenizeWhenExpr_(src) {
       var quote = ch;
       i++;
       var out = '';
+      var closed = false;
       while (i < src.length) {
         var c = src[i];
         if (c === '\\') {
@@ -2611,12 +2613,13 @@ function tokenizeWhenExpr_(src) {
         }
         if (c === quote) {
           i++;
+          closed = true;
           break;
         }
         out += c;
         i++;
       }
-      if (i > src.length) throw new Error('unterminated string');
+      if (!closed) throw new Error('unterminated string');
       push('str', out);
       continue;
     }
@@ -2761,8 +2764,86 @@ function evalWhenExpr_(expr, vars) {
   return toBoolean_(result);
 }
 
+function normalizeRuleTargetName_(v) {
+  var s = String(v == null ? '' : v).trim();
+  return s || '講評・改善点';
+}
+
 /**
- * ルール適用（先頭マッチ1件のみ）
+ * _rules を target ごとに評価する。クライアント側 evaluateRulesLocallyMulti_ と同じ仕様。
+ * - priority順に並んだ rules を走査し、targetごとに最初にマッチした1件だけ採用する
+ * - enabled が false の行、構文エラーの whenExpr はスキップする
+ * - message は evaluateRuleMessage_ で評価する
+ * @param {Array<Object>} rules
+ * @param {Array<string>} headers
+ * @param {Object} vars
+ * @param {Array<{target:string}>} slotsResolved
+ * @param {Array<string>} slotLabels
+ * @return {{outputs:Array<string>, matchedRowNumberForSlot1:(number|null), error:(string|null)}}
+ */
+function evaluateRulesByTarget_(rules, headers, vars, slotsResolved, slotLabels) {
+  var slots = Array.isArray(slotsResolved) ? slotsResolved : [];
+  var out = ['', '', ''];
+  if (!Array.isArray(rules) || !rules.length || !Array.isArray(headers)) {
+    return { outputs: out, matchedRowNumberForSlot1: null, error: null };
+  }
+
+  var whenKey = findKey_(headers, ['whenexpr', 'when', 'expr', 'condition', 'if']);
+  var textKey = findRuleMessageKey_(headers);
+  var enabledKey = findKey_(headers, ['enabled', 'enable', 'active', 'isenabled', 'isactive']);
+  var targetKey = findKey_(headers, ['target', 'dest', 'group', 'outputtarget']);
+
+  if (!whenKey) return { outputs: out, matchedRowNumberForSlot1: null, error: 'whenExpr列が見つかりません' };
+  if (!textKey) return { outputs: out, matchedRowNumberForSlot1: null, error: 'message列が見つかりません' };
+
+  var matchedByTarget = {};
+  var rowByTarget = {};
+  var labels = Array.isArray(slotLabels) ? slotLabels : [];
+
+  for (var i = 0; i < rules.length; i++) {
+    var rule = rules[i];
+    if (!rule || typeof rule !== 'object') continue;
+
+    if (enabledKey && !isEnabled_(rule[enabledKey])) continue;
+
+    var whenExpr = rule[whenKey];
+    if (!whenExpr || typeof whenExpr !== 'string') whenExpr = String(whenExpr || '').trim();
+
+    var isMatch = false;
+    if (!whenExpr) {
+      isMatch = true;
+    } else {
+      try {
+        isMatch = evalWhenExpr_(whenExpr, vars || {});
+      } catch (e) {
+        continue;
+      }
+    }
+    if (!isMatch) continue;
+
+    var targetName = targetKey ? normalizeRuleTargetName_(rule[targetKey]) : '講評・改善点';
+    if (matchedByTarget.hasOwnProperty(targetName)) continue;
+
+    var text = evaluateRuleMessage_(rule[textKey], vars || {}, labels);
+    matchedByTarget[targetName] = (text === null || text === undefined) ? '' : String(text);
+    rowByTarget[targetName] = rule._rowNumber || null;
+  }
+
+  for (var s = 0; s < 3; s++) {
+    var slot = slots[s];
+    if (!slot || !slot.target) continue;
+    var slotTarget = normalizeRuleTargetName_(slot.target);
+    out[s] = matchedByTarget[slotTarget] || '';
+  }
+
+  var slot1Target = slots[0] && slots[0].target ? normalizeRuleTargetName_(slots[0].target) : '講評・改善点';
+  var matchedRowNumberForSlot1 = rowByTarget.hasOwnProperty(slot1Target) ? rowByTarget[slot1Target] : null;
+  return { outputs: out, matchedRowNumberForSlot1: matchedRowNumberForSlot1, error: null };
+}
+
+/**
+ * ルール適用（後方互換用。先頭マッチ1件のみ）
+ * 現行UIの最大3枠出力と同じ評価を確認したい場合は evaluateRulesByTarget_ を使う。
  * @param {{templateId:string, vars:Object}} params
  * @return {{ok:boolean, templateId?:string, text:string, matched:boolean, matchedRowNumber?:number|null, skipped:{disabled:number,invalidPriority:number,invalidExpr:number,invalidRow:number}, error?:string}}
  */

@@ -20,6 +20,17 @@
     button.warn { background: #b00020; color: #fff; border-color: #b00020; }
     .hint { font-size: 12px; color: #555; line-height: 1.4; }
     .status { font-size: 12px; margin-top: 4px; }
+    label { font-size: 12px; font-weight: 650; color: #333; }
+    select, input { box-sizing: border-box; padding: 5px 6px; border: 1px solid #ccc; border-radius: 6px; background: #fff; font-size: 13px; }
+    .builder-note { font-size: 12px; color: #555; line-height: 1.4; margin: 2px 0 6px; }
+    .condition-row { display: grid; grid-template-columns: 58px 52px 1fr 64px 74px; gap: 4px; align-items: center; margin: 4px 0; }
+    .condition-row:first-child .condition-join { visibility: hidden; }
+    .condition-not { display: flex; align-items: center; gap: 3px; font-size: 12px; font-weight: 500; }
+    .condition-right { width: 100%; }
+    .message-grid { display: grid; grid-template-columns: 84px 1fr; gap: 5px 6px; align-items: center; }
+    .map-entry { display: grid; grid-template-columns: 1fr 1.4fr; gap: 4px; margin: 4px 0; }
+    .map-entry input { width: 100%; }
+    .wide-actions button { flex: 1 1 120px; }
   </style>
 </head>
 <body>
@@ -36,6 +47,52 @@
       <button class="warn" id="clearBtn">クリア</button>
     </div>
     <div class="status" id="status"></div>
+  </div>
+
+  <div class="group">
+    <div class="title">条件式ビルダー</div>
+    <div class="builder-note">whenExpr用です。`score1`〜`score5` と `total` を比較し、`and` / `or` / `not` でつなぎます。</div>
+    <div id="conditionRows"></div>
+    <div class="row wide-actions">
+      <button id="addConditionBtn" type="button">条件行を追加</button>
+      <button id="buildConditionReplaceBtn" class="primary" type="button">式へ反映</button>
+      <button id="buildConditionInsertBtn" type="button">カーソルへ挿入</button>
+    </div>
+  </div>
+
+  <div class="group">
+    <div class="title">文言式ビルダー・変換表</div>
+    <div class="builder-note">message列用です。生成結果は先頭に `=` を付け、文字列連結は `&` を使います。</div>
+    <div class="message-grid">
+      <label for="msgLabelSelect">ラベル</label>
+      <select id="msgLabelSelect">
+        <option value="label1">label1</option>
+        <option value="label2">label2</option>
+        <option value="label3">label3</option>
+        <option value="label4">label4</option>
+        <option value="label5">label5</option>
+        <option value="">使わない</option>
+      </select>
+
+      <label for="msgSeparatorInput">区切り文</label>
+      <input id="msgSeparatorInput" type="text" value="：" placeholder="：" />
+
+      <label for="mapSourceSelect">変換対象</label>
+      <select id="mapSourceSelect">
+        <option value="score1">score1</option>
+        <option value="score2">score2</option>
+        <option value="score3">score3</option>
+        <option value="score4">score4</option>
+        <option value="score5">score5</option>
+      </select>
+    </div>
+    <div id="mapRows" style="margin-top:6px;"></div>
+    <div class="row wide-actions">
+      <button id="addMapRowBtn" type="button">変換行を追加</button>
+      <button id="buildMessageReplaceBtn" class="primary" type="button">式へ反映</button>
+      <button id="buildMessageInsertBtn" type="button">カーソルへ挿入</button>
+      <button id="insertMapOnlyBtn" type="button">mapだけ挿入</button>
+    </div>
   </div>
 
   <div class="group">
@@ -165,6 +222,296 @@
     { label: '）', token: ')' },
   ];
 
+  const CONDITION_LEFTS = [
+    { label: 'score1', value: 'score1' },
+    { label: 'score2', value: 'score2' },
+    { label: 'score3', value: 'score3' },
+    { label: 'score4', value: 'score4' },
+    { label: 'score5', value: 'score5' },
+    { label: 'total', value: 'total' },
+    { label: 'score1 + score2', value: 'score1 + score2' },
+    { label: 'score1 + score2 + score3', value: 'score1 + score2 + score3' }
+  ];
+  const CONDITION_OPS = ['>=', '<=', '>', '<', '==', '!='];
+  const CONDITION_JOINS = ['and', 'or'];
+  const MESSAGE_REFS = ['score1', 'score2', 'score3', 'score4', 'score5', 'label1', 'label2', 'label3', 'label4', 'label5'];
+
+  function replaceExpr(text) {
+    setExpr(text, true);
+    pushHistory(text);
+  }
+
+  function setStatusText(text) {
+    statusEl.textContent = text || '';
+  }
+
+  function selectOptions(select, options, selectedValue) {
+    if (!select) return;
+    select.innerHTML = '';
+    options.forEach((opt) => {
+      const option = document.createElement('option');
+      if (typeof opt === 'string') {
+        option.value = opt;
+        option.textContent = opt;
+      } else {
+        option.value = opt.value;
+        option.textContent = opt.label;
+      }
+      if (option.value === selectedValue) option.selected = true;
+      select.appendChild(option);
+    });
+  }
+
+  function normalizeConditionLeft_(value) {
+    const v = String(value || '').trim();
+    return CONDITION_LEFTS.some((x) => x.value === v) ? v : '';
+  }
+
+  function normalizeConditionOp_(value) {
+    const v = String(value || '').trim();
+    return CONDITION_OPS.indexOf(v) >= 0 ? v : '==';
+  }
+
+  function quoteWhenString_(text) {
+    return '"' + String(text == null ? '' : text).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
+  }
+
+  function normalizeConditionRight_(value) {
+    const raw = String(value == null ? '' : value).trim();
+    if (!raw) return '';
+    if (/^\d+(\.\d+)?$/.test(raw)) return raw;
+    if (/^(true|false|null)$/i.test(raw)) return raw.toLowerCase();
+    if (CONDITION_LEFTS.some((x) => x.value === raw)) return raw;
+    if ((raw[0] === '"' && raw[raw.length - 1] === '"') || (raw[0] === "'" && raw[raw.length - 1] === "'")) return raw;
+    return quoteWhenString_(raw);
+  }
+
+  function buildConditionDslFromRows_(rows) {
+    const clauses = [];
+    (rows || []).forEach((row) => {
+      if (!row) return;
+      const left = normalizeConditionLeft_(row.left);
+      const right = normalizeConditionRight_(row.right);
+      if (!left || !right) return;
+      const op = normalizeConditionOp_(row.op);
+      let clause = left + ' ' + op + ' ' + right;
+      if (row.not) clause = 'not(' + clause + ')';
+      const join = CONDITION_JOINS.indexOf(String(row.join || '').trim()) >= 0 ? String(row.join).trim() : 'and';
+      clauses.push({ join, clause });
+    });
+    if (!clauses.length) return '';
+    return clauses.map((item, idx) => idx === 0 ? item.clause : item.join + ' ' + item.clause).join(' ');
+  }
+
+  function quoteMessageString_(text) {
+    return '"' + String(text == null ? '' : text).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
+  }
+
+  function sanitizeMapAtom_(value) {
+    return String(value == null ? '' : value).trim().replace(/[=,]/g, ' ');
+  }
+
+  function normalizeMessageRef_(value) {
+    const v = String(value || '').trim();
+    return MESSAGE_REFS.indexOf(v) >= 0 ? v : '';
+  }
+
+  function buildMapDsl_(source, entries) {
+    const src = normalizeMessageRef_(source);
+    if (!src) return '';
+    const pairs = [];
+    (entries || []).forEach((entry) => {
+      if (!entry) return;
+      const key = sanitizeMapAtom_(entry.key);
+      if (!key) return;
+      pairs.push(key + '=' + sanitizeMapAtom_(entry.value));
+    });
+    if (!pairs.length) return src;
+    return 'map(' + src + ',' + quoteMessageString_(pairs.join(',')) + ')';
+  }
+
+  function buildMessageTerm_(part) {
+    if (!part) return '';
+    if (part.type === 'text') {
+      const text = String(part.value == null ? '' : part.value);
+      return text ? quoteMessageString_(text) : '';
+    }
+    if (part.type === 'label' || part.type === 'score') {
+      return normalizeMessageRef_(part.value);
+    }
+    if (part.type === 'map') {
+      return buildMapDsl_(part.source, part.entries);
+    }
+    if (part.type === 'raw') {
+      return String(part.value || '').trim();
+    }
+    return '';
+  }
+
+  function buildMessageDslFromParts_(parts) {
+    const terms = [];
+    (parts || []).forEach((part) => {
+      const term = buildMessageTerm_(part);
+      if (term) terms.push(term);
+    });
+    return terms.length ? '=' + terms.join(' & ') : '';
+  }
+
+  function createConditionRow(defaults) {
+    const row = document.createElement('div');
+    row.className = 'condition-row';
+    row.dataset.conditionRow = '1';
+
+    const join = document.createElement('select');
+    join.className = 'condition-join';
+    selectOptions(join, CONDITION_JOINS, defaults && defaults.join ? defaults.join : 'and');
+
+    const notLabel = document.createElement('label');
+    notLabel.className = 'condition-not';
+    const not = document.createElement('input');
+    not.type = 'checkbox';
+    not.checked = !!(defaults && defaults.not);
+    notLabel.appendChild(not);
+    notLabel.appendChild(document.createTextNode('not'));
+
+    const left = document.createElement('select');
+    selectOptions(left, CONDITION_LEFTS, defaults && defaults.left ? defaults.left : 'score1');
+
+    const op = document.createElement('select');
+    selectOptions(op, CONDITION_OPS, defaults && defaults.op ? defaults.op : '>=');
+
+    const right = document.createElement('input');
+    right.className = 'condition-right';
+    right.type = 'text';
+    right.inputMode = 'decimal';
+    right.placeholder = '3';
+    right.value = defaults && defaults.right ? defaults.right : '';
+
+    row.appendChild(join);
+    row.appendChild(notLabel);
+    row.appendChild(left);
+    row.appendChild(op);
+    row.appendChild(right);
+    return row;
+  }
+
+  function readConditionRows_() {
+    const container = document.getElementById('conditionRows');
+    if (!container) return [];
+    const rows = Array.prototype.slice.call(container.querySelectorAll('[data-condition-row]'));
+    return rows.map((row, idx) => {
+      const selects = row.querySelectorAll('select');
+      const not = row.querySelector('input[type="checkbox"]');
+      const right = row.querySelector('input.condition-right');
+      return {
+        join: idx === 0 ? '' : (selects[0] ? selects[0].value : 'and'),
+        not: !!(not && not.checked),
+        left: selects[1] ? selects[1].value : '',
+        op: selects[2] ? selects[2].value : '==',
+        right: right ? right.value : ''
+      };
+    });
+  }
+
+  function buildConditionFromForm_() {
+    return buildConditionDslFromRows_(readConditionRows_());
+  }
+
+  function createMapRow(key, value) {
+    const row = document.createElement('div');
+    row.className = 'map-entry';
+    row.dataset.mapRow = '1';
+    const keyInput = document.createElement('input');
+    keyInput.type = 'text';
+    keyInput.placeholder = '値';
+    keyInput.value = key || '';
+    const valueInput = document.createElement('input');
+    valueInput.type = 'text';
+    valueInput.placeholder = '文言';
+    valueInput.value = value || '';
+    row.appendChild(keyInput);
+    row.appendChild(valueInput);
+    return row;
+  }
+
+  function readMapRows_() {
+    const container = document.getElementById('mapRows');
+    if (!container) return [];
+    const rows = Array.prototype.slice.call(container.querySelectorAll('[data-map-row]'));
+    return rows.map((row) => {
+      const inputs = row.querySelectorAll('input');
+      return {
+        key: inputs[0] ? inputs[0].value : '',
+        value: inputs[1] ? inputs[1].value : ''
+      };
+    });
+  }
+
+  function buildMessageFromForm_() {
+    const label = document.getElementById('msgLabelSelect');
+    const separator = document.getElementById('msgSeparatorInput');
+    const source = document.getElementById('mapSourceSelect');
+    const parts = [];
+    if (label && label.value) parts.push({ type: 'label', value: label.value });
+    if (separator && separator.value) parts.push({ type: 'text', value: separator.value });
+    if (source && source.value) parts.push({ type: 'map', source: source.value, entries: readMapRows_() });
+    return buildMessageDslFromParts_(parts);
+  }
+
+  function initConditionBuilder() {
+    const container = document.getElementById('conditionRows');
+    if (!container) return;
+    container.appendChild(createConditionRow({ left: 'score1 + score2', op: '>=', right: '7' }));
+    container.appendChild(createConditionRow({ join: 'and', left: 'score3', op: '>=', right: '3' }));
+
+    document.getElementById('addConditionBtn').addEventListener('click', () => {
+      container.appendChild(createConditionRow({ join: 'and', left: 'total', op: '>=', right: '' }));
+    });
+    document.getElementById('buildConditionReplaceBtn').addEventListener('click', () => {
+      const text = buildConditionFromForm_();
+      if (!text) return setStatusText('条件式を作るには、左辺と右辺を入力してください。');
+      replaceExpr(text);
+      setStatusText('条件式を式ウインドウへ反映しました。');
+    });
+    document.getElementById('buildConditionInsertBtn').addEventListener('click', () => {
+      const text = buildConditionFromForm_();
+      if (!text) return setStatusText('条件式を作るには、左辺と右辺を入力してください。');
+      insertAtCursor(text);
+      setStatusText('条件式をカーソル位置へ挿入しました。');
+    });
+  }
+
+  function initMessageBuilder() {
+    const container = document.getElementById('mapRows');
+    if (!container) return;
+    container.appendChild(createMapRow('1', '要確認'));
+    container.appendChild(createMapRow('2', '改善中'));
+    container.appendChild(createMapRow('3', '良好'));
+
+    document.getElementById('addMapRowBtn').addEventListener('click', () => {
+      container.appendChild(createMapRow('', ''));
+    });
+    document.getElementById('buildMessageReplaceBtn').addEventListener('click', () => {
+      const text = buildMessageFromForm_();
+      if (!text) return setStatusText('文言式を作るには、ラベルまたは変換表を入力してください。');
+      replaceExpr(text);
+      setStatusText('文言式を式ウインドウへ反映しました。');
+    });
+    document.getElementById('buildMessageInsertBtn').addEventListener('click', () => {
+      const text = buildMessageFromForm_();
+      if (!text) return setStatusText('文言式を作るには、ラベルまたは変換表を入力してください。');
+      insertAtCursor(text);
+      setStatusText('文言式をカーソル位置へ挿入しました。');
+    });
+    document.getElementById('insertMapOnlyBtn').addEventListener('click', () => {
+      const source = document.getElementById('mapSourceSelect');
+      const text = buildMapDsl_(source ? source.value : '', readMapRows_());
+      if (!text) return setStatusText('mapを作るには、変換対象と変換表を入力してください。');
+      insertAtCursor(text);
+      setStatusText('map式をカーソル位置へ挿入しました。');
+    });
+  }
+
   function renderButtons() {
     const vars = document.getElementById('vars');
     VARS.forEach(x => vars.appendChild(mkBtn(x.label, () => insertAtCursor(x.token))));
@@ -182,6 +529,17 @@
     PARENS.forEach(x => parens.appendChild(mkBtn(x.label, () => insertAtCursor(x.token))));
   }
   renderButtons();
+  initConditionBuilder();
+  initMessageBuilder();
+
+  if (typeof window !== 'undefined') {
+    window.__sidebarBuilderTestHooks = {
+      buildConditionDslFromRows_: buildConditionDslFromRows_,
+      buildMessageDslFromParts_: buildMessageDslFromParts_,
+      buildMapDsl_: buildMapDsl_,
+      quoteMessageString_: quoteMessageString_
+    };
+  }
 
   // --- 操作ボタン ---
   document.getElementById('undoBtn').addEventListener('click', () => {
