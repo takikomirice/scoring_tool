@@ -1742,6 +1742,9 @@ function ensureSheetWithTemplatePackHeaders_(ss, sheetName, candidateMap, canoni
   var required = canonicalKeys || [];
   var lastCol = Math.max(sheet.getLastColumn(), required.length);
   var current = lastCol > 0 ? sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(function (h) { return String(h || '').trim(); }) : [];
+  while (current.length && !current[current.length - 1]) {
+    current.pop();
+  }
   var hasAnyHeader = false;
   for (var i = 0; i < current.length; i++) {
     if (current[i]) {
@@ -1804,6 +1807,40 @@ function apiExportTemplatePack() {
     new Date(),
     'テンプレパック'
   );
+}
+
+/**
+ * ルール用の _templates / _rules シートを作成し、必要ヘッダを補完する。
+ * 既存ヘッダに許容別名がある場合は、その列名を維持する。
+ * @return {{ok:boolean, spreadsheetId:string, templates:Object, rules:Object}}
+ */
+function apiEnsureRuleSheets() {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(5000);
+  try {
+    var ss = getConfigSpreadsheetForRules_();
+    var templateKeys = ['templateId', 'name', 'enabled'];
+    var ruleKeys = ['templateId', 'target', 'priority', 'whenExpr', 'message', 'enabled', 'visible'];
+    var templateInfo = ensureSheetWithTemplatePackHeaders_(ss, '_templates', getTemplatePackTemplateHeaderCandidates_(), templateKeys);
+    var ruleInfo = ensureSheetWithTemplatePackHeaders_(ss, '_rules', getTemplatePackRuleHeaderCandidates_(), ruleKeys);
+
+    return {
+      ok: true,
+      spreadsheetId: ss && typeof ss.getId === 'function' ? ss.getId() : '',
+      templates: {
+        sheetName: '_templates',
+        headers: templateInfo.headers,
+        keyMap: templateInfo.keyMap
+      },
+      rules: {
+        sheetName: '_rules',
+        headers: ruleInfo.headers,
+        keyMap: ruleInfo.keyMap
+      }
+    };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function apiImportTemplatePack(payload) {
@@ -3071,7 +3108,22 @@ function onOpen() {
   SpreadsheetApp.getUi()
     .createMenu('採点アプリ')
     .addItem('whenExpr 記述ツール', 'showWhenExprTool_')
+    .addSeparator()
+    .addItem('ルール用シートを初期化', 'ensureRuleSheetsFromMenu_')
     .addToUi();
+}
+
+/**
+ * メニューからルール用シートを初期化する。
+ */
+function ensureRuleSheetsFromMenu_() {
+  var ui = SpreadsheetApp.getUi();
+  try {
+    apiEnsureRuleSheets();
+    ui.alert('_templates と _rules のヘッダを準備しました。');
+  } catch (e) {
+    ui.alert('ルール用シートの初期化に失敗しました: ' + (e && e.message ? e.message : e));
+  }
 }
 
 /**
