@@ -5,21 +5,42 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <base target="_top">
   <style>
-    body { font-family: system-ui, sans-serif; margin: 8px; font-size: 14px; }
-    .panel { border: 1px solid #ddd; border-radius: 10px; padding: 8px; }
-    textarea { width: 100%; height: 96px; box-sizing: border-box; padding: 6px; }
+    body { font-family: system-ui, sans-serif; margin: 8px; font-size: 14px; color: #111; }
+    .panel { border: 1px solid #ddd; border-radius: 8px; padding: 8px; }
+    textarea { width: 100%; min-height: 52px; height: 58px; resize: vertical; box-sizing: border-box; padding: 6px; border: 1px solid #ccc; border-radius: 6px; font-size: 13px; line-height: 1.4; }
     .row { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0; }
-    /* 電卓風（省スペース）：3列グリッド＋隙間0（必要な行だけに付ける） */
-    .row.keypad3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; }
-    .row.keypad3 > button { width: 100%; border-radius: 0; padding: 7px 0; }
+    .row.keypad3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 2px; }
+    .row.keypad3 > button { width: 100%; border-radius: 6px; padding: 7px 0; }
     .group { border: 0; border-radius: 0; padding: 0; margin: 8px 0 0; }
     .group:first-child { margin-top: 0; }
     .title { font-weight: 650; margin: 0 0 3px; font-size: 12px; }
-    button { padding: 5px 10px; border: 1px solid #ccc; border-radius: 10px; background: #fff; cursor: pointer; font-size: 14px; }
+    button { padding: 5px 8px; border: 1px solid #ccc; border-radius: 8px; background: #fff; cursor: pointer; font-size: 13px; }
     button.primary { background: #111; color: #fff; border-color: #111; }
     button.warn { background: #b00020; color: #fff; border-color: #b00020; }
     .hint { font-size: 12px; color: #555; line-height: 1.4; }
     .status { font-size: 12px; margin-top: 4px; }
+    label { font-size: 12px; font-weight: 650; color: #333; }
+    select, input { box-sizing: border-box; padding: 5px 6px; border: 1px solid #ccc; border-radius: 6px; background: #fff; font-size: 13px; }
+    .builder-note { font-size: 12px; color: #555; line-height: 1.4; margin: 2px 0 6px; }
+    .condition-row { display: grid; grid-template-columns: 52px 48px minmax(0, 1fr) 58px 58px; gap: 4px; align-items: center; margin: 4px 0; }
+    .condition-row:first-child .condition-join { visibility: hidden; }
+    .condition-not { display: flex; align-items: center; gap: 3px; font-size: 12px; font-weight: 500; }
+    .condition-right { width: 100%; }
+    .mode-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; margin: 8px 0; }
+    .mode-tab { border-radius: 8px; padding: 7px 4px; font-size: 12px; }
+    .mode-tab.is-active { background: #111; color: #fff; border-color: #111; }
+    .mode-panel { display: none; }
+    .mode-panel.is-active { display: block; }
+    .mode-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 8px 0; }
+    .top-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+    .top-actions-secondary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; margin-top: 4px; }
+    .message-grid { display: grid; grid-template-columns: 78px 1fr; gap: 5px 6px; align-items: center; }
+    .map-entry { display: grid; grid-template-columns: 1fr 1.4fr; gap: 4px; margin: 4px 0; }
+    .map-entry input { width: 100%; }
+    details { border-top: 1px solid #eee; padding-top: 7px; margin-top: 8px; }
+    summary { cursor: pointer; font-size: 12px; font-weight: 650; color: #333; }
+    .compact-label { font-size: 11px; color: #666; margin-top: 6px; }
+    .is-hidden { display: none !important; }
   </style>
 </head>
 <body>
@@ -28,46 +49,128 @@
     <div class="title">式ウインドウ</div>
     <textarea id="expr" placeholder="ここに whenExpr または message式（=...）を記述"></textarea>
 
-    <div class="row">
+    <div class="top-actions">
+      <button class="primary" id="pasteBtn">選択セルに貼り付け ↓</button>
+      <button class="warn" id="clearBtn">クリア</button>
+    </div>
+    <div class="top-actions-secondary">
       <button id="undoBtn">↩ 戻る</button>
       <button id="redoBtn">↪ 進む</button>
       <button id="copyBtn">コピー</button>
-      <button class="primary" id="pasteBtn">選択セルに貼り付け ↓</button>
-      <button class="warn" id="clearBtn">クリア</button>
     </div>
     <div class="status" id="status"></div>
   </div>
 
-  <div class="group">
-    <div class="title">パラメータ</div>
-    <div class="row keypad3" id="vars"></div>
+  <div class="mode-tabs" role="tablist" aria-label="式ビルダーのモード">
+    <button type="button" class="mode-tab is-active" data-mode-tab="condition">条件を作る</button>
+    <button type="button" class="mode-tab" data-mode-tab="message">文言を作る</button>
+    <button type="button" class="mode-tab" data-mode-tab="manual">手入力・部品</button>
   </div>
 
-  <div class="group">
-    <div class="title">条件（比較）</div>
-    <div class="row keypad3" id="cmps"></div>
-  </div>
-
-  <div class="group">
-    <div class="title">論理</div>
-    <div class="row keypad3" id="logics"></div>
-  </div>
-
-  <div class="group">
-    <div class="title">括弧</div>
-    <div class="row keypad3" id="parens"></div>
-  </div>
-
-  <div class="group">
-    <div class="title">数字ルール（メモ）</div>
-    <div class="hint">
-      ・whenExpr: `score1 >= 3 && score2 < 5` のように score1〜score5 の比較・論理条件を書く<br>
-      ・message式: 先頭を `=` にして式評価（例: `=label1 & "：" & map(score1,"1=×,2=△,3=○")`）<br>
-      ・連結は `&` を使用（文字列は `"..."`）<br>
-      ・message式の `+` は数値加算。whenExprの加算条件は v0.1.0 では正式仕様外<br>
-      ・先頭を `'` にすると文字列として扱う（例: `'=score1+score2`）
+  <section id="mode-condition" class="mode-panel is-active" data-mode-panel="condition">
+    <div class="title">条件を作る</div>
+    <div class="builder-note">whenExpr列へ貼る条件式を作ります。</div>
+    <div id="conditionRows"></div>
+    <div class="mode-actions">
+      <button id="buildConditionReplaceBtn" class="primary" type="button">式へ反映</button>
+      <button id="buildConditionInsertBtn" type="button">カーソルへ挿入</button>
     </div>
-  </div>
+    <details>
+      <summary>上級者向け</summary>
+      <div class="row">
+        <button id="addConditionBtn" type="button">条件行を追加</button>
+      </div>
+      <div class="hint">notを使う場合は、生成後に式ウインドウで括弧の範囲を確認してください。</div>
+    </details>
+    <details>
+      <summary>式の書き方・例</summary>
+      <div class="hint">
+        例: <code>(score1 + score2) >= 7 and score3 >= 3</code><br>
+        例: <code>total >= 20</code>
+      </div>
+    </details>
+  </section>
+
+  <section id="mode-message" class="mode-panel" data-mode-panel="message">
+    <div class="title">文言を作る</div>
+    <div class="builder-note">message列へ貼る文言式を作ります。点数を文言へ変換できます。</div>
+    <div class="message-grid">
+      <label for="msgPrefixInput">前置き</label>
+      <input id="msgPrefixInput" type="text" value="観点「" placeholder="観点「" />
+
+      <label for="msgLabelSelect">ラベル</label>
+      <select id="msgLabelSelect">
+        <option value="label1">label1</option>
+        <option value="label2">label2</option>
+        <option value="label3">label3</option>
+        <option value="label4">label4</option>
+        <option value="label5">label5</option>
+        <option value="">使わない</option>
+      </select>
+
+      <label for="msgAfterLabelInput">ラベル後</label>
+      <input id="msgAfterLabelInput" type="text" value="」は" placeholder="」は" />
+
+      <label for="mapSourceSelect">点数</label>
+      <select id="mapSourceSelect">
+        <option value="score1">score1</option>
+        <option value="score2">score2</option>
+        <option value="score3">score3</option>
+        <option value="score4">score4</option>
+        <option value="score5">score5</option>
+      </select>
+
+      <label for="msgSuffixInput">末尾</label>
+      <input id="msgSuffixInput" type="text" value="です。" placeholder="です。" />
+    </div>
+    <div class="compact-label">点数を文言に変換</div>
+    <div id="mapRows" style="margin-top:6px;"></div>
+    <div class="mode-actions">
+      <button id="buildMessageReplaceBtn" class="primary" type="button">式へ反映</button>
+      <button id="buildMessageInsertBtn" type="button">カーソルへ挿入</button>
+    </div>
+    <details>
+      <summary>map/変換表の説明</summary>
+      <div class="hint">画面では「点数を文言に変換」として扱います。式ウインドウには message式のDSLが生成されるので、必要なら直接編集できます。変換表は <code>key=value</code> をカンマ区切りで書き、値の中にカンマは入れられません。</div>
+    </details>
+    <details>
+      <summary>上級者向け</summary>
+      <div class="row">
+        <button id="addMapRowBtn" type="button">変換行を追加</button>
+        <button id="insertMapOnlyBtn" type="button">変換式だけ挿入</button>
+      </div>
+    </details>
+  </section>
+
+  <section id="mode-manual" class="mode-panel" data-mode-panel="manual">
+    <div class="title">手入力・部品</div>
+    <div class="builder-note">式ウインドウへ直接入力しながら、必要な部品だけ挿入します。</div>
+    <details>
+      <summary>部品を直接挿入</summary>
+      <div class="compact-label">score / label</div>
+      <div class="row keypad3" id="vars"></div>
+      <div class="compact-label">比較</div>
+      <div class="row keypad3" id="cmps"></div>
+      <div class="compact-label">論理</div>
+      <div class="row keypad3" id="logics"></div>
+      <div class="compact-label">括弧</div>
+      <div class="row keypad3" id="parens"></div>
+    </details>
+    <details>
+      <summary>式の書き方・例</summary>
+      <div class="hint">
+        whenExpr: <code>total >= 20</code><br>
+        message式: <code>="観点「" & label1 & "」は" & map(score1,"1=要確認,2=改善中,3=良好") & "です。"</code>
+      </div>
+    </details>
+    <details>
+      <summary>上級者向け</summary>
+      <div class="hint">
+        `+` は数値加算、文字列連結は `&` です。message式を通常文として保存したい場合は先頭に `'` を付けます。
+        message式では `total` は使わず、入力済みのスコアだけを `score1+score2` のように足します。
+      </div>
+    </details>
+  </section>
 
 <script>
   const exprEl = document.getElementById('expr');
@@ -138,10 +241,15 @@
     { label: 'score3', token: 'score3' },
     { label: 'score4', token: 'score4' },
     { label: 'score5', token: 'score5' },
-    // 合計は実変数ではなく、message式向けのショートカットとして挿入する
-    { label: '合計(message)', token: '(score1 + score2 + score3 + score4 + score5)' },
+    { label: 'total(when)', token: 'total' },
+    { label: 'label1', token: 'label1' },
+    { label: 'label2', token: 'label2' },
+    { label: 'label3', token: 'label3' },
+    { label: 'label4', token: 'label4' },
+    { label: 'label5', token: 'label5' },
+    { label: '加算(message)', token: 'score1+score2' },
     { label: '連結', token: ' & ""' },
-    { label: '置換', token: 'map(score1,"1=×,2=△,3=○")' },
+    { label: '変換式', token: 'map(score1,"1=要確認,2=改善中,3=良好")' },
   ];
 
   const CMPS = [
@@ -154,16 +262,330 @@
   ];
 
   const LOGICS = [
-    { label: 'AND', token: ' && ' },
-    { label: 'OR', token: ' || ' },
-    // NOT は事故りやすいので !( を推奨
-    { label: 'NOT', token: '!(' },
+    { label: 'AND', token: ' and ' },
+    { label: 'OR', token: ' or ' },
+    // NOT は事故りやすいので not( を推奨
+    { label: 'NOT', token: 'not(' },
   ];
 
   const PARENS = [
     { label: '（', token: '(' },
     { label: '）', token: ')' },
   ];
+
+  const CONDITION_LEFTS = [
+    { label: 'score1', value: 'score1' },
+    { label: 'score2', value: 'score2' },
+    { label: 'score3', value: 'score3' },
+    { label: 'score4', value: 'score4' },
+    { label: 'score5', value: 'score5' },
+    { label: 'total', value: 'total' },
+    { label: 'score1 + score2', value: 'score1 + score2' },
+    { label: 'score1 + score2 + score3', value: 'score1 + score2 + score3' }
+  ];
+  const CONDITION_OPS = ['>=', '<=', '>', '<', '==', '!='];
+  const CONDITION_JOINS = ['and', 'or'];
+  const MESSAGE_REFS = ['score1', 'score2', 'score3', 'score4', 'score5', 'label1', 'label2', 'label3', 'label4', 'label5'];
+
+  function replaceExpr(text) {
+    setExpr(text, true);
+    pushHistory(text);
+  }
+
+  function setStatusText(text) {
+    statusEl.textContent = text || '';
+  }
+
+  function selectOptions(select, options, selectedValue) {
+    if (!select) return;
+    select.innerHTML = '';
+    options.forEach((opt) => {
+      const option = document.createElement('option');
+      if (typeof opt === 'string') {
+        option.value = opt;
+        option.textContent = opt;
+      } else {
+        option.value = opt.value;
+        option.textContent = opt.label;
+      }
+      if (option.value === selectedValue) option.selected = true;
+      select.appendChild(option);
+    });
+  }
+
+  function normalizeConditionLeft_(value) {
+    const v = String(value || '').trim();
+    return CONDITION_LEFTS.some((x) => x.value === v) ? v : '';
+  }
+
+  function normalizeConditionOp_(value) {
+    const v = String(value || '').trim();
+    return CONDITION_OPS.indexOf(v) >= 0 ? v : '==';
+  }
+
+  function quoteWhenString_(text) {
+    return '"' + String(text == null ? '' : text).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
+  }
+
+  function normalizeConditionRight_(value) {
+    const raw = String(value == null ? '' : value).trim();
+    if (!raw) return '';
+    if (/^\d+(\.\d+)?$/.test(raw)) return raw;
+    if (/^(true|false|null)$/i.test(raw)) return raw.toLowerCase();
+    if (CONDITION_LEFTS.some((x) => x.value === raw)) return raw;
+    if ((raw[0] === '"' && raw[raw.length - 1] === '"') || (raw[0] === "'" && raw[raw.length - 1] === "'")) return raw;
+    return quoteWhenString_(raw);
+  }
+
+  function formatConditionLeft_(left) {
+    const v = String(left || '').trim();
+    if (v.indexOf('+') >= 0 && !(v[0] === '(' && v[v.length - 1] === ')')) {
+      return '(' + v + ')';
+    }
+    return v;
+  }
+
+  function buildConditionDslFromRows_(rows) {
+    const clauses = [];
+    (rows || []).forEach((row) => {
+      if (!row) return;
+      const left = normalizeConditionLeft_(row.left);
+      const right = normalizeConditionRight_(row.right);
+      if (!left || !right) return;
+      const op = normalizeConditionOp_(row.op);
+      let clause = formatConditionLeft_(left) + ' ' + op + ' ' + right;
+      if (row.not) clause = 'not(' + clause + ')';
+      const join = CONDITION_JOINS.indexOf(String(row.join || '').trim()) >= 0 ? String(row.join).trim() : 'and';
+      clauses.push({ join, clause });
+    });
+    if (!clauses.length) return '';
+    return clauses.map((item, idx) => idx === 0 ? item.clause : item.join + ' ' + item.clause).join(' ');
+  }
+
+  function quoteMessageString_(text) {
+    return '"' + String(text == null ? '' : text).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
+  }
+
+  function sanitizeMapAtom_(value) {
+    return String(value == null ? '' : value).trim().replace(/[=,]/g, ' ');
+  }
+
+  function normalizeMessageRef_(value) {
+    const v = String(value || '').trim();
+    return MESSAGE_REFS.indexOf(v) >= 0 ? v : '';
+  }
+
+  function buildMapDsl_(source, entries) {
+    const src = normalizeMessageRef_(source);
+    if (!src) return '';
+    const pairs = [];
+    (entries || []).forEach((entry) => {
+      if (!entry) return;
+      const key = sanitizeMapAtom_(entry.key);
+      if (!key) return;
+      pairs.push(key + '=' + sanitizeMapAtom_(entry.value));
+    });
+    if (!pairs.length) return src;
+    return 'map(' + src + ',' + quoteMessageString_(pairs.join(',')) + ')';
+  }
+
+  function buildMessageTerm_(part) {
+    if (!part) return '';
+    if (part.type === 'text') {
+      const text = String(part.value == null ? '' : part.value);
+      return text ? quoteMessageString_(text) : '';
+    }
+    if (part.type === 'label' || part.type === 'score') {
+      return normalizeMessageRef_(part.value);
+    }
+    if (part.type === 'map' || part.type === 'conversion') {
+      return buildMapDsl_(part.source, part.entries);
+    }
+    if (part.type === 'raw') {
+      return String(part.value || '').trim();
+    }
+    return '';
+  }
+
+  function buildMessageDslFromParts_(parts) {
+    const terms = [];
+    (parts || []).forEach((part) => {
+      const term = buildMessageTerm_(part);
+      if (term) terms.push(term);
+    });
+    return terms.length ? '=' + terms.join(' & ') : '';
+  }
+
+  function createConditionRow(defaults) {
+    const row = document.createElement('div');
+    row.className = 'condition-row';
+    row.dataset.conditionRow = '1';
+
+    const join = document.createElement('select');
+    join.className = 'condition-join';
+    selectOptions(join, CONDITION_JOINS, defaults && defaults.join ? defaults.join : 'and');
+
+    const notLabel = document.createElement('label');
+    notLabel.className = 'condition-not';
+    const not = document.createElement('input');
+    not.type = 'checkbox';
+    not.checked = !!(defaults && defaults.not);
+    notLabel.appendChild(not);
+    notLabel.appendChild(document.createTextNode('not'));
+
+    const left = document.createElement('select');
+    selectOptions(left, CONDITION_LEFTS, defaults && defaults.left ? defaults.left : 'score1');
+
+    const op = document.createElement('select');
+    selectOptions(op, CONDITION_OPS, defaults && defaults.op ? defaults.op : '>=');
+
+    const right = document.createElement('input');
+    right.className = 'condition-right';
+    right.type = 'text';
+    right.inputMode = 'decimal';
+    right.placeholder = '3';
+    right.value = defaults && defaults.right ? defaults.right : '';
+
+    row.appendChild(join);
+    row.appendChild(notLabel);
+    row.appendChild(left);
+    row.appendChild(op);
+    row.appendChild(right);
+    return row;
+  }
+
+  function readConditionRows_() {
+    const container = document.getElementById('conditionRows');
+    if (!container) return [];
+    const rows = Array.prototype.slice.call(container.querySelectorAll('[data-condition-row]'));
+    return rows.map((row, idx) => {
+      const selects = row.querySelectorAll('select');
+      const not = row.querySelector('input[type="checkbox"]');
+      const right = row.querySelector('input.condition-right');
+      return {
+        join: idx === 0 ? '' : (selects[0] ? selects[0].value : 'and'),
+        not: !!(not && not.checked),
+        left: selects[1] ? selects[1].value : '',
+        op: selects[2] ? selects[2].value : '==',
+        right: right ? right.value : ''
+      };
+    });
+  }
+
+  function buildConditionFromForm_() {
+    return buildConditionDslFromRows_(readConditionRows_());
+  }
+
+  function createMapRow(key, value) {
+    const row = document.createElement('div');
+    row.className = 'map-entry';
+    row.dataset.mapRow = '1';
+    const keyInput = document.createElement('input');
+    keyInput.type = 'text';
+    keyInput.placeholder = '値';
+    keyInput.value = key || '';
+    const valueInput = document.createElement('input');
+    valueInput.type = 'text';
+    valueInput.placeholder = '文言';
+    valueInput.value = value || '';
+    row.appendChild(keyInput);
+    row.appendChild(valueInput);
+    return row;
+  }
+
+  function readMapRows_() {
+    const container = document.getElementById('mapRows');
+    if (!container) return [];
+    const rows = Array.prototype.slice.call(container.querySelectorAll('[data-map-row]'));
+    return rows.map((row) => {
+      const inputs = row.querySelectorAll('input');
+      return {
+        key: inputs[0] ? inputs[0].value : '',
+        value: inputs[1] ? inputs[1].value : ''
+      };
+    });
+  }
+
+  function buildMessageFromForm_() {
+    const label = document.getElementById('msgLabelSelect');
+    const prefix = document.getElementById('msgPrefixInput');
+    const afterLabel = document.getElementById('msgAfterLabelInput');
+    const suffix = document.getElementById('msgSuffixInput');
+    const source = document.getElementById('mapSourceSelect');
+    const parts = [];
+    if (prefix && prefix.value) parts.push({ type: 'text', value: prefix.value });
+    if (label && label.value) parts.push({ type: 'label', value: label.value });
+    if (afterLabel && afterLabel.value) parts.push({ type: 'text', value: afterLabel.value });
+    if (source && source.value) parts.push({ type: 'conversion', source: source.value, entries: readMapRows_() });
+    if (suffix && suffix.value) parts.push({ type: 'text', value: suffix.value });
+    return buildMessageDslFromParts_(parts);
+  }
+
+  function setMode(mode) {
+    const nextMode = mode || 'condition';
+    Array.prototype.slice.call(document.querySelectorAll('[data-mode-tab]')).forEach((btn) => {
+      const active = btn.dataset.modeTab === nextMode;
+      btn.classList.toggle('is-active', active);
+      btn.setAttribute('aria-selected', active ? 'true' : 'false');
+    });
+    Array.prototype.slice.call(document.querySelectorAll('[data-mode-panel]')).forEach((panel) => {
+      panel.classList.toggle('is-active', panel.dataset.modePanel === nextMode);
+    });
+  }
+
+  function initConditionBuilder() {
+    const container = document.getElementById('conditionRows');
+    if (!container) return;
+    container.appendChild(createConditionRow({ left: 'score1 + score2', op: '>=', right: '7' }));
+    container.appendChild(createConditionRow({ join: 'and', left: 'score3', op: '>=', right: '3' }));
+
+    document.getElementById('addConditionBtn').addEventListener('click', () => {
+      container.appendChild(createConditionRow({ join: 'and', left: 'total', op: '>=', right: '' }));
+    });
+    document.getElementById('buildConditionReplaceBtn').addEventListener('click', () => {
+      const text = buildConditionFromForm_();
+      if (!text) return setStatusText('条件式を作るには、左辺と右辺を入力してください。');
+      replaceExpr(text);
+      setStatusText('条件式を式ウインドウへ反映しました。');
+    });
+    document.getElementById('buildConditionInsertBtn').addEventListener('click', () => {
+      const text = buildConditionFromForm_();
+      if (!text) return setStatusText('条件式を作るには、左辺と右辺を入力してください。');
+      insertAtCursor(text);
+      setStatusText('条件式をカーソル位置へ挿入しました。');
+    });
+  }
+
+  function initMessageBuilder() {
+    const container = document.getElementById('mapRows');
+    if (!container) return;
+    container.appendChild(createMapRow('1', '要確認'));
+    container.appendChild(createMapRow('2', '改善中'));
+    container.appendChild(createMapRow('3', '良好'));
+
+    document.getElementById('addMapRowBtn').addEventListener('click', () => {
+      container.appendChild(createMapRow('', ''));
+    });
+    document.getElementById('buildMessageReplaceBtn').addEventListener('click', () => {
+      const text = buildMessageFromForm_();
+      if (!text) return setStatusText('文言式を作るには、ラベルまたは変換表を入力してください。');
+      replaceExpr(text);
+      setStatusText('文言式を式ウインドウへ反映しました。');
+    });
+    document.getElementById('buildMessageInsertBtn').addEventListener('click', () => {
+      const text = buildMessageFromForm_();
+      if (!text) return setStatusText('文言式を作るには、ラベルまたは変換表を入力してください。');
+      insertAtCursor(text);
+      setStatusText('文言式をカーソル位置へ挿入しました。');
+    });
+    document.getElementById('insertMapOnlyBtn').addEventListener('click', () => {
+      const source = document.getElementById('mapSourceSelect');
+      const text = buildMapDsl_(source ? source.value : '', readMapRows_());
+      if (!text) return setStatusText('mapを作るには、変換対象と変換表を入力してください。');
+      insertAtCursor(text);
+      setStatusText('map式をカーソル位置へ挿入しました。');
+    });
+  }
 
   function renderButtons() {
     const vars = document.getElementById('vars');
@@ -182,6 +604,22 @@
     PARENS.forEach(x => parens.appendChild(mkBtn(x.label, () => insertAtCursor(x.token))));
   }
   renderButtons();
+  initConditionBuilder();
+  initMessageBuilder();
+  Array.prototype.slice.call(document.querySelectorAll('[data-mode-tab]')).forEach((btn) => {
+    btn.addEventListener('click', () => setMode(btn.dataset.modeTab));
+  });
+  setMode('condition');
+
+  if (typeof window !== 'undefined') {
+    window.__sidebarBuilderTestHooks = {
+      buildConditionDslFromRows_: buildConditionDslFromRows_,
+      buildMessageDslFromParts_: buildMessageDslFromParts_,
+      buildMapDsl_: buildMapDsl_,
+      quoteMessageString_: quoteMessageString_,
+      setMode: setMode
+    };
+  }
 
   // --- 操作ボタン ---
   document.getElementById('undoBtn').addEventListener('click', () => {

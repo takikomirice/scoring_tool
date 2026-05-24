@@ -77,7 +77,7 @@ function getDefaultConfig_() {
     charCountCols: [],
     scoreCols: ['AA', 'AB', 'AC', 'AD', 'AE'],
     scoreHeaders: ['', '', '', '', ''],
-    // 旧互換用。v0.1.0の公開仕様では使用しない。
+    // 旧互換用。v1.0.0候補の公開仕様では使用しない。
     mergeRules: {},
     // スコア入力ロック（列チェック）
     colChecks: [false, false, false, false, false],
@@ -442,7 +442,7 @@ function apiSetConfig(config) {
 
   // 必要項目の正規化
   var out = getDefaultConfig_();
-  var ruleTemplateIdRaw = String(config.ruleTemplateId || out.ruleTemplateId || '').trim();
+  var ruleTemplateIdRaw = String(config.ruleTemplateId == null ? '' : config.ruleTemplateId).trim();
   // ruleTemplateId が空文字の場合は保存しない（未選択状態）
   if (ruleTemplateIdRaw) {
     out.ruleTemplateId = ruleTemplateIdRaw;
@@ -536,7 +536,7 @@ function apiSetConfig(config) {
   out.ruleOutputSlots = normalizeRuleOutputSlots_(config.ruleOutputSlots);
   out.flushShortcut = String(config.flushShortcut || out.flushShortcut || 'Ctrl+S').trim();
   
-  // 旧互換用。v0.1.0の公開仕様では使用しない。
+  // 旧互換用。v1.0.0候補の公開仕様では使用しない。
   out.mergeRules = normalizeMergeRules_(config.mergeRules);
 
   // displayCols / displayHeaders を5に正規化
@@ -600,27 +600,9 @@ function apiSetConfig(config) {
   };
 
   var props = getScriptProps_();
-  
-  // ruleTemplateId が空文字の場合は、既存の CONFIG から ruleTemplateId を削除
+
+  // ruleTemplateId が空文字の場合は未選択状態として保存対象から除外する
   if (!ruleTemplateIdRaw) {
-    var existingJson = props.getProperty('CONFIG');
-    if (existingJson) {
-      try {
-        var existing = JSON.parse(existingJson);
-        if (existing && typeof existing === 'object') {
-          delete existing.ruleTemplateId;
-          // 既存の設定をマージ（ruleTemplateId 以外）
-          for (var k in existing) {
-            if (k !== 'ruleTemplateId' && existing.hasOwnProperty(k)) {
-              out[k] = existing[k];
-            }
-          }
-        }
-      } catch (e) {
-        // パースエラーは無視（新規保存として扱う）
-      }
-    }
-    // out から ruleTemplateId を削除（undefined にすることで JSON.stringify で除外）
     delete out.ruleTemplateId;
   }
   
@@ -1150,11 +1132,13 @@ function saveRowToSheet_(cfg, sheet, row) {
 }
 
 // -----------------------------
-// message式/旧互換DSL評価エンジン
+// message式評価エンジン
 // -----------------------------
 
 /**
- * message式/旧互換DSLを評価
+ * message式を評価する。
+ * v1.0.0候補の公開仕様では _rules.message 先頭が "=" の場合だけ使う。
+ * 数値スロット表記（1+2など）は内部互換のため残すが、採点値入力列の統合ルール用途では使わない。
  * @param {string} rule - 式（例: "1+2+3", "1,2,3", "1:2"）
  * @param {Array<{slot:number,value:*}>} slotValues - スロット番号と値の配列
  * @return {*} 評価結果（数値または文字列、エラー時はnull）
@@ -1421,7 +1405,8 @@ function evaluateMergeRule_(rule, slotValues, slotLabels, varsRaw) {
 /**
  * _rules の本文を評価する。
  * - 通常文: そのまま返す
- * - "=..." で始まる場合: 統合DSLとして評価して文字列化
+ * - "=..." で始まる場合: message式として評価して文字列化
+ * - 現行DSLでは、& / label / map を使う新構文と + の単純加算を同一式内で混在させない
  */
 function evaluateRuleMessage_(rawText, vars, slotLabels) {
   var original = (rawText === null || rawText === undefined) ? '' : String(rawText);
@@ -1460,6 +1445,413 @@ function apiExportConfig() {
     },
     config: cfg
   };
+}
+
+// -----------------------------
+// テンプレパック機能
+// -----------------------------
+
+const TEMPLATE_PACK_META_TYPE = 'scoring-tool-template-pack';
+const TEMPLATE_PACK_VERSION = '0.1.0';
+
+function getTemplatePackTemplateHeaderCandidates_() {
+  return {
+    templateId: ['templateid', 'template'],
+    name: ['name', 'label', 'title', 'displayname'],
+    enabled: ['enabled', 'enable', 'active', 'isenabled', 'isactive']
+  };
+}
+
+function getTemplatePackRuleHeaderCandidates_() {
+  return {
+    templateId: ['templateid', 'template'],
+    target: ['target', 'dest', 'group', 'outputtarget'],
+    priority: ['priority', 'prio', 'order', 'rank'],
+    whenExpr: ['whenexpr', 'when', 'expr', 'condition', 'if'],
+    message: ['message', 'text', 'output', 'result', 'comment'],
+    enabled: ['enabled', 'enable', 'active', 'isenabled', 'isactive'],
+    visible: ['visible', 'show', 'display']
+  };
+}
+
+function templatePackRequireHeader_(headers, candidates, sheetName, logicalName) {
+  var key = findKey_(headers || [], candidates);
+  if (!key) {
+    throw new Error('テンプレパックをエクスポートできません: ' + sheetName + ' に ' + logicalName + ' 列が見つかりません');
+  }
+  return key;
+}
+
+function templatePackOptionalHeader_(headers, candidates) {
+  return findKey_(headers || [], candidates);
+}
+
+function templatePackBoolToSheetValue_(v) {
+  return v ? 1 : 0;
+}
+
+function templatePackVisibleToBool_(v, columnExists) {
+  if (!columnExists) return true;
+  if (v === true) return true;
+  if (v === 1) return true;
+  if (v === '1') return true;
+  var s = String(v || '').trim().toLowerCase();
+  return s === 'true';
+}
+
+function buildTemplatePackFromSheetObjects_(templateRes, ruleRes, exportedAt, name) {
+  templateRes = templateRes || { headers: [], rows: [] };
+  ruleRes = ruleRes || { headers: [], rows: [] };
+  var templateCandidates = getTemplatePackTemplateHeaderCandidates_();
+  var ruleCandidates = getTemplatePackRuleHeaderCandidates_();
+
+  var templateIdKey = templatePackRequireHeader_(templateRes.headers, templateCandidates.templateId, '_templates', 'templateId');
+  var templateEnabledKey = templatePackRequireHeader_(templateRes.headers, templateCandidates.enabled, '_templates', 'enabled');
+  var templateNameKey = templatePackOptionalHeader_(templateRes.headers, templateCandidates.name);
+
+  var ruleTemplateIdKey = templatePackRequireHeader_(ruleRes.headers, ruleCandidates.templateId, '_rules', 'templateId');
+  var rulePriorityKey = templatePackRequireHeader_(ruleRes.headers, ruleCandidates.priority, '_rules', 'priority');
+  var ruleWhenKey = templatePackRequireHeader_(ruleRes.headers, ruleCandidates.whenExpr, '_rules', 'whenExpr');
+  var ruleMessageKey = templatePackRequireHeader_(ruleRes.headers, ruleCandidates.message, '_rules', 'message');
+  var ruleEnabledKey = templatePackRequireHeader_(ruleRes.headers, ruleCandidates.enabled, '_rules', 'enabled');
+  var ruleTargetKey = templatePackOptionalHeader_(ruleRes.headers, ruleCandidates.target);
+  var ruleVisibleKey = templatePackOptionalHeader_(ruleRes.headers, ruleCandidates.visible);
+
+  var templates = [];
+  var templateRows = Array.isArray(templateRes.rows) ? templateRes.rows : [];
+  for (var t = 0; t < templateRows.length; t++) {
+    var tr = templateRows[t];
+    if (!tr || typeof tr !== 'object') continue;
+    var tid = String(tr[templateIdKey] == null ? '' : tr[templateIdKey]).trim();
+    if (!tid) continue;
+    templates.push({
+      templateId: tid,
+      name: templateNameKey ? String(tr[templateNameKey] == null ? '' : tr[templateNameKey]).trim() : '',
+      enabled: isEnabled_(tr[templateEnabledKey])
+    });
+  }
+
+  var rules = [];
+  var ruleRows = Array.isArray(ruleRes.rows) ? ruleRes.rows : [];
+  for (var r = 0; r < ruleRows.length; r++) {
+    var rr = ruleRows[r];
+    if (!rr || typeof rr !== 'object') continue;
+    var rtid = String(rr[ruleTemplateIdKey] == null ? '' : rr[ruleTemplateIdKey]).trim();
+    if (!rtid) continue;
+    var priority = toFiniteNumberOrNaN_(rr[rulePriorityKey]);
+    rules.push({
+      templateId: rtid,
+      target: ruleTargetKey ? String(rr[ruleTargetKey] == null ? '' : rr[ruleTargetKey]).trim() : '',
+      priority: isNaN(priority) ? null : priority,
+      whenExpr: String(rr[ruleWhenKey] == null ? '' : rr[ruleWhenKey]).trim(),
+      message: String(rr[ruleMessageKey] == null ? '' : rr[ruleMessageKey]),
+      enabled: isEnabled_(rr[ruleEnabledKey]),
+      visible: templatePackVisibleToBool_(ruleVisibleKey ? rr[ruleVisibleKey] : null, !!ruleVisibleKey)
+    });
+  }
+
+  return {
+    meta: {
+      type: TEMPLATE_PACK_META_TYPE,
+      version: TEMPLATE_PACK_VERSION,
+      name: String(name || 'テンプレパック'),
+      exportedAt: exportedAt && typeof exportedAt.toISOString === 'function' ? exportedAt.toISOString() : new Date().toISOString()
+    },
+    templates: templates,
+    rules: rules
+  };
+}
+
+function ensureTemplatePackString_(v, key) {
+  if (typeof v !== 'string') {
+    throw new Error('テンプレパックが不正です: ' + key + ' は文字列で指定してください');
+  }
+}
+
+function ensureTemplatePackBool_(v, key) {
+  if (typeof v !== 'boolean') {
+    throw new Error('テンプレパックが不正です: ' + key + ' は true/false で指定してください');
+  }
+}
+
+function normalizeTemplatePackPayloadStrict_(payload) {
+  if (!isPlainObject_(payload)) {
+    throw new Error('テンプレパックが不正です: JSONの最上位はオブジェクトで指定してください');
+  }
+  for (var topKey in payload) {
+    if (!payload.hasOwnProperty(topKey)) continue;
+    if (topKey !== 'meta' && topKey !== 'templates' && topKey !== 'rules') {
+      throw new Error('テンプレパックが不正です: top-level の ' + topKey + ' は許可されていません');
+    }
+  }
+  if (!isPlainObject_(payload.meta)) {
+    throw new Error('テンプレパックが不正です: meta はオブジェクトで指定してください');
+  }
+  if (payload.meta.type !== TEMPLATE_PACK_META_TYPE) {
+    throw new Error('テンプレパックが不正です: meta.type は scoring-tool-template-pack を指定してください');
+  }
+  ensureTemplatePackString_(payload.meta.version, 'meta.version');
+  ensureTemplatePackString_(payload.meta.name, 'meta.name');
+  ensureTemplatePackString_(payload.meta.exportedAt, 'meta.exportedAt');
+  if (!Array.isArray(payload.templates)) {
+    throw new Error('テンプレパックが不正です: templates は配列で指定してください');
+  }
+  if (!Array.isArray(payload.rules)) {
+    throw new Error('テンプレパックが不正です: rules は配列で指定してください');
+  }
+
+  var templateIds = {};
+  var templates = [];
+  for (var i = 0; i < payload.templates.length; i++) {
+    var tmpl = payload.templates[i];
+    if (!isPlainObject_(tmpl)) {
+      throw new Error('テンプレパックが不正です: templates[' + i + '] はオブジェクトで指定してください');
+    }
+    var allowedTemplateKeys = { templateId: true, name: true, enabled: true };
+    for (var tk in tmpl) {
+      if (tmpl.hasOwnProperty(tk) && !allowedTemplateKeys[tk]) {
+        throw new Error('テンプレパックが不正です: templates[' + i + '].' + tk + ' は許可されていません');
+      }
+    }
+    ensureTemplatePackString_(tmpl.templateId, 'templates[' + i + '].templateId');
+    ensureTemplatePackString_(tmpl.name, 'templates[' + i + '].name');
+    ensureTemplatePackBool_(tmpl.enabled, 'templates[' + i + '].enabled');
+    var tid = String(tmpl.templateId || '').trim();
+    if (!tid) {
+      throw new Error('テンプレパックが不正です: templates[' + i + '].templateId は空にできません');
+    }
+    var normTid = normalizeTemplateId_(tid);
+    if (templateIds[normTid]) {
+      throw new Error('テンプレパックが不正です: templateId が重複しています: ' + tid);
+    }
+    templateIds[normTid] = tid;
+    templates.push({ templateId: tid, name: String(tmpl.name), enabled: tmpl.enabled });
+  }
+  if (templates.length === 0) {
+    throw new Error('テンプレパックが不正です: templates は1件以上必要です');
+  }
+
+  var rules = [];
+  for (var r = 0; r < payload.rules.length; r++) {
+    var rule = payload.rules[r];
+    if (!isPlainObject_(rule)) {
+      throw new Error('テンプレパックが不正です: rules[' + r + '] はオブジェクトで指定してください');
+    }
+    var allowedRuleKeys = { templateId: true, target: true, priority: true, whenExpr: true, message: true, enabled: true, visible: true };
+    for (var rk in rule) {
+      if (rule.hasOwnProperty(rk) && !allowedRuleKeys[rk]) {
+        throw new Error('テンプレパックが不正です: rules[' + r + '].' + rk + ' は許可されていません');
+      }
+    }
+    ensureTemplatePackString_(rule.templateId, 'rules[' + r + '].templateId');
+    ensureTemplatePackString_(rule.target, 'rules[' + r + '].target');
+    ensureTemplatePackString_(rule.whenExpr, 'rules[' + r + '].whenExpr');
+    ensureTemplatePackString_(rule.message, 'rules[' + r + '].message');
+    ensureTemplatePackBool_(rule.enabled, 'rules[' + r + '].enabled');
+    ensureTemplatePackBool_(rule.visible, 'rules[' + r + '].visible');
+    var ruleTid = String(rule.templateId || '').trim();
+    if (!ruleTid) {
+      throw new Error('テンプレパックが不正です: rules[' + r + '].templateId は空にできません');
+    }
+    if (!templateIds[normalizeTemplateId_(ruleTid)]) {
+      throw new Error('テンプレパックが不正です: rules[' + r + '].templateId は templates に存在しません: ' + ruleTid);
+    }
+    var priority = Number(rule.priority);
+    if (typeof rule.priority !== 'number' || !isFinite(priority)) {
+      throw new Error('テンプレパックが不正です: rules[' + r + '].priority は有限数で指定してください');
+    }
+    rules.push({
+      templateId: ruleTid,
+      target: String(rule.target),
+      priority: priority,
+      whenExpr: String(rule.whenExpr),
+      message: String(rule.message),
+      enabled: rule.enabled,
+      visible: rule.visible
+    });
+  }
+
+  return {
+    meta: {
+      type: TEMPLATE_PACK_META_TYPE,
+      version: payload.meta.version,
+      name: payload.meta.name,
+      exportedAt: payload.meta.exportedAt
+    },
+    templates: templates,
+    rules: rules
+  };
+}
+
+function assertTemplatePackNoTemplateIdConflicts_(pack, existingTemplateIds) {
+  var existing = {};
+  var list = Array.isArray(existingTemplateIds) ? existingTemplateIds : [];
+  for (var i = 0; i < list.length; i++) {
+    var norm = normalizeTemplateId_(list[i]);
+    if (norm) existing[norm] = true;
+  }
+  var conflicts = [];
+  var templates = pack && Array.isArray(pack.templates) ? pack.templates : [];
+  for (var t = 0; t < templates.length; t++) {
+    var tid = templates[t].templateId;
+    if (existing[normalizeTemplateId_(tid)]) conflicts.push(tid);
+  }
+  if (conflicts.length) {
+    throw new Error('既存のtemplateIdと衝突しています: ' + conflicts.join(', ') + '。既存テンプレートを削除するか、templateIdを変更してからインポートしてください');
+  }
+}
+
+function getConfigSpreadsheetForRules_() {
+  var ssId = getConfigSpreadsheetId_();
+  if (!ssId) {
+    try {
+      var active = SpreadsheetApp.getActiveSpreadsheet();
+      if (active) return active;
+    } catch (e) {}
+    throw new Error('設定用スプレッドシートIDが取得できませんでした');
+  }
+  try {
+    return SpreadsheetApp.openById(ssId);
+  } catch (e2) {
+    throw new Error('設定用スプレッドシートを開けませんでした: ' + (e2 && e2.message ? e2.message : e2));
+  }
+}
+
+function resolveTemplatePackImportHeaders_(currentHeaders, candidateMap, canonicalKeys) {
+  var headers = Array.isArray(currentHeaders) ? currentHeaders.slice() : [];
+  var keyMap = {};
+  var keys = canonicalKeys || [];
+  for (var i = 0; i < keys.length; i++) {
+    var canonical = keys[i];
+    var existing = findKey_(headers, candidateMap[canonical] || [normalizeKey_(canonical)]);
+    if (existing) {
+      keyMap[canonical] = existing;
+      continue;
+    }
+    headers.push(canonical);
+    keyMap[canonical] = canonical;
+  }
+  return { headers: headers, keyMap: keyMap };
+}
+
+function ensureSheetWithTemplatePackHeaders_(ss, sheetName, candidateMap, canonicalKeys) {
+  var sheet = ss.getSheetByName(sheetName);
+  if (!sheet) {
+    sheet = ss.insertSheet(sheetName);
+  }
+  var required = canonicalKeys || [];
+  var lastCol = Math.max(sheet.getLastColumn(), required.length);
+  var current = lastCol > 0 ? sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(function (h) { return String(h || '').trim(); }) : [];
+  var hasAnyHeader = false;
+  for (var i = 0; i < current.length; i++) {
+    if (current[i]) {
+      hasAnyHeader = true;
+      break;
+    }
+  }
+  if (!hasAnyHeader) {
+    sheet.getRange(1, 1, 1, required.length).setValues([required]);
+    var initialKeyMap = {};
+    for (var k0 = 0; k0 < required.length; k0++) initialKeyMap[required[k0]] = required[k0];
+    return { sheet: sheet, headers: required.slice(), keyMap: initialKeyMap };
+  }
+  var resolved = resolveTemplatePackImportHeaders_(current, candidateMap || {}, required);
+  sheet.getRange(1, 1, 1, resolved.headers.length).setValues([resolved.headers]);
+  return { sheet: sheet, headers: resolved.headers, keyMap: resolved.keyMap };
+}
+
+function appendObjectsByHeaders_(sheet, headers, objects) {
+  if (!objects || !objects.length) return;
+  var rows = [];
+  for (var i = 0; i < objects.length; i++) {
+    var obj = objects[i];
+    var row = [];
+    for (var h = 0; h < headers.length; h++) {
+      var key = headers[h];
+      row.push(obj.hasOwnProperty(key) ? obj[key] : '');
+    }
+    rows.push(row);
+  }
+  var startRow = sheet.getLastRow() + 1;
+  sheet.getRange(startRow, 1, rows.length, headers.length).setValues(rows);
+}
+
+function readExistingTemplateIds_(sheet) {
+  if (!sheet) return [];
+  var res = readSheetObjects_(sheet);
+  var idKey = findKey_(res.headers, getTemplatePackTemplateHeaderCandidates_().templateId);
+  if (!idKey) return [];
+  var out = [];
+  for (var i = 0; i < res.rows.length; i++) {
+    var tid = String(res.rows[i][idKey] == null ? '' : res.rows[i][idKey]).trim();
+    if (tid) out.push(tid);
+  }
+  return out;
+}
+
+function apiExportTemplatePack() {
+  var templateSheet = getRuleSheetOrNull_('_templates');
+  if (!templateSheet) {
+    throw new Error('テンプレパックをエクスポートできません: _templates シートが見つかりません');
+  }
+  var ruleSheet = getRuleSheetOrNull_('_rules');
+  if (!ruleSheet) {
+    throw new Error('テンプレパックをエクスポートできません: _rules シートが見つかりません');
+  }
+  return buildTemplatePackFromSheetObjects_(
+    readSheetObjects_(templateSheet),
+    readSheetObjects_(ruleSheet),
+    new Date(),
+    'テンプレパック'
+  );
+}
+
+function apiImportTemplatePack(payload) {
+  var pack = normalizeTemplatePackPayloadStrict_(payload);
+  var lock = LockService.getScriptLock();
+  lock.waitLock(5000);
+  try {
+    var ss = getConfigSpreadsheetForRules_();
+    var existingTemplateSheet = ss.getSheetByName('_templates');
+    assertTemplatePackNoTemplateIdConflicts_(pack, readExistingTemplateIds_(existingTemplateSheet));
+
+    var templateKeys = ['templateId', 'name', 'enabled'];
+    var ruleKeys = ['templateId', 'target', 'priority', 'whenExpr', 'message', 'enabled', 'visible'];
+    var templateInfo = ensureSheetWithTemplatePackHeaders_(ss, '_templates', getTemplatePackTemplateHeaderCandidates_(), templateKeys);
+    var ruleInfo = ensureSheetWithTemplatePackHeaders_(ss, '_rules', getTemplatePackRuleHeaderCandidates_(), ruleKeys);
+
+    var templateRows = pack.templates.map(function (t) {
+      var row = {};
+      row[templateInfo.keyMap.templateId] = t.templateId;
+      row[templateInfo.keyMap.name] = t.name;
+      row[templateInfo.keyMap.enabled] = templatePackBoolToSheetValue_(t.enabled);
+      return row;
+    });
+    var ruleRows = pack.rules.map(function (r) {
+      var row = {};
+      row[ruleInfo.keyMap.templateId] = r.templateId;
+      row[ruleInfo.keyMap.target] = r.target;
+      row[ruleInfo.keyMap.priority] = r.priority;
+      row[ruleInfo.keyMap.whenExpr] = r.whenExpr;
+      row[ruleInfo.keyMap.message] = r.message;
+      row[ruleInfo.keyMap.enabled] = templatePackBoolToSheetValue_(r.enabled);
+      row[ruleInfo.keyMap.visible] = templatePackBoolToSheetValue_(r.visible);
+      return row;
+    });
+
+    appendObjectsByHeaders_(templateInfo.sheet, templateInfo.headers, templateRows);
+    appendObjectsByHeaders_(ruleInfo.sheet, ruleInfo.headers, ruleRows);
+    return {
+      ok: true,
+      imported: {
+        templates: templateRows.length,
+        rules: ruleRows.length
+      },
+      templateIds: pack.templates.map(function (t) { return t.templateId; })
+    };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function isValidColA1OrEmpty_(v) {
@@ -1730,11 +2122,15 @@ function getRuleSheetOrNull_(sheetName) {
 function readSheetObjects_(sheet) {
   var range = sheet.getDataRange();
   var values = range.getValues();
-  if (!values || values.length < 2) {
+  if (!values || values.length === 0) {
     return { headers: [], rows: [] };
   }
 
   var headers = values[0].map(function (h) { return String(h || '').trim(); });
+  if (values.length < 2) {
+    return { headers: headers, rows: [] };
+  }
+
   var rows = [];
   for (var r = 1; r < values.length; r++) {
     var rowVals = values[r];
@@ -1772,6 +2168,19 @@ function findKey_(headers, normalizedCandidates) {
     var nh = normalizeKey_(h);
     for (var j = 0; j < normalizedCandidates.length; j++) {
       if (nh === normalizedCandidates[j]) return h;
+    }
+  }
+  return '';
+}
+
+function findRuleMessageKey_(headers) {
+  var candidates = ['message', 'text', 'output', 'result', 'comment'];
+  var list = Array.isArray(headers) ? headers : [];
+  for (var c = 0; c < candidates.length; c++) {
+    for (var i = 0; i < list.length; i++) {
+      var h = list[i];
+      if (!h) continue;
+      if (normalizeKey_(h) === candidates[c]) return h;
     }
   }
   return '';
@@ -1967,9 +2376,9 @@ function apiGetRules(params) {
  * 
  * 2. 数値
  *    - パターン: [0-9]+(\.[0-9]+)?
- *    - 整数: 123, 0, -5
- *    - 小数: 3.14, 0.5, -2.5
- *    - 注意: 負数は先頭に - を付ける（単項演算子として扱われる可能性あり）
+ *    - 整数: 123, 0
+ *    - 小数: 3.14, 0.5
+ *    - 注意: 負数、減算、乗算、除算は v1.0.0 候補では未対応
  * 
  * 3. 文字列
  *    - パターン: "..." または '...'
@@ -1980,18 +2389,20 @@ function apiGetRules(params) {
  * 4. 演算子
  *    - 等価: ==, !=
  *    - 比較: <, <=, >, >=
- *    - 論理: && (AND), || (OR), ! (NOT)
- *    - 代替表記: and (&& の代替), or (|| の代替), not (! の代替) ※未実装の可能性あり
+ *    - 加算: +（数値として解釈できない値は 0 扱い）
+ *    - 論理: and (AND), or (OR), not (NOT)
+ *    - 互換表記: && (AND), || (OR), ! (NOT)
  * 
  * 5. 括弧
  *    - ( ) : グループ化と優先順位の変更
  * 
  * ===== 優先順位（高い順） =====
  * 
- * 1. NOT (!)
- * 2. 比較演算子 (<, <=, >, >=, ==, !=)
- * 3. AND (&&)
- * 4. OR (||)
+ * 1. NOT (! / not)
+ * 2. 加算 (+)
+ * 3. 比較演算子 (<, <=, >, >=, ==, !=)
+ * 4. AND (&& / and)
+ * 5. OR (|| / or)
  * 
  * 例: !a && b || c は ((!a) && b) || c と等価
  * 
@@ -2010,9 +2421,9 @@ function apiGetRules(params) {
  * 
  * 3. 未定義変数
  *    - getVarByPath_ で取得できない変数は undefined を返す
- *    - undefined は toBoolean_ で false に変換される
- *    - 比較時は空文字列として扱われる
- *    - 仕様: 未定義変数は null 扱い（将来的に統一する可能性あり）
+ *    - 評価時はサーバー/クライアントとも null に揃える
+ *    - null は toBoolean_ で false に変換される
+ *    - 正式変数以外の利用は推奨しない
  * 
  * 4. 型変換ルール
  *    - toBoolean_(v):
@@ -2021,17 +2432,21 @@ function apiGetRules(params) {
  *      * 数値: NaN または 0 → false, それ以外 → true
  *      * 文字列: 空文字列（trim後） → false, それ以外 → true
  *      * その他 → true
+ *
+ * 5. total
+ *    - score1〜score5 の合計値
+ *    - 数値として解釈できる値だけ加算し、未入力や非数値は 0 として扱う
  * 
  * ===== 使用例 =====
  * 
  * - score1 >= 5 && score2 < 3
  * - !(score1 == 0 && score2 == 0)
- * - score1 + score2 >= 10  ※ 注意: + は未対応（数値演算は未実装）
- * - total >= 24  ※ total は未定義変数の場合 null/undefined 扱い
+ * - score1 + score2 >= 10
+ * - total >= 24
  * 
  * ===== 実装上の注意 =====
  * 
- * - パーサーは再帰下降パーサー（parseOr_ → parseAnd_ → parseUnary_ → parseComparison_ → parsePrimary_）
+ * - パーサーは再帰下降パーサー（parseOr_ → parseAnd_ → parseUnary_ → parseComparison_ → parseAddition_ → parsePrimary_）
  * - トークン化は tokenizeWhenExpr_ で行う
  * - 評価は evalWhenExpr_ で行う
  * - エラー時は例外を投げる（呼び出し側でキャッチして invalidExpr としてカウント）
@@ -2070,6 +2485,40 @@ function toNumberIfNumeric_(v) {
     if (/^-?\d+(\.\d+)?$/.test(s)) return Number(s);
   }
   return NaN;
+}
+
+function toNumberForArithmetic_(v) {
+  var n = toNumberIfNumeric_(v);
+  return isNaN(n) ? 0 : n;
+}
+
+function computeWhenExprTotal_(vars) {
+  var sum = 0;
+  for (var i = 1; i <= 5; i++) {
+    sum += toNumberForArithmetic_(getVarByPath_(vars || {}, 'score' + i));
+  }
+  return sum;
+}
+
+function normalizeRuleVarsForEvaluation_(vars) {
+  var input = isPlainObject_(vars) ? vars : {};
+  var out = {};
+  for (var key in input) {
+    if (input.hasOwnProperty(key)) out[key] = input[key];
+  }
+  for (var i = 1; i <= 5; i++) {
+    var scoreKey = 'score' + i;
+    var raw = input.hasOwnProperty(scoreKey) ? input[scoreKey] : null;
+    var n = toNumberIfNumeric_(raw);
+    out[scoreKey] = isNaN(n) ? null : n;
+  }
+  out.total = computeWhenExprTotal_(out);
+  return out;
+}
+
+function getWhenExprVar_(vars, name) {
+  if (String(name || '') === 'total') return computeWhenExprTotal_(vars || {});
+  return getVarByPath_(vars || {}, name);
 }
 
 function compare_(a, op, b) {
@@ -2141,7 +2590,7 @@ function tokenizeWhenExpr_(src) {
       i++;
       continue;
     }
-    if (ch === '!' || ch === '>' || ch === '<') {
+    if (ch === '!' || ch === '>' || ch === '<' || ch === '+') {
       push('op', ch);
       i++;
       continue;
@@ -2152,6 +2601,7 @@ function tokenizeWhenExpr_(src) {
       var quote = ch;
       i++;
       var out = '';
+      var closed = false;
       while (i < src.length) {
         var c = src[i];
         if (c === '\\') {
@@ -2167,12 +2617,13 @@ function tokenizeWhenExpr_(src) {
         }
         if (c === quote) {
           i++;
+          closed = true;
           break;
         }
         out += c;
         i++;
       }
-      if (i > src.length) throw new Error('unterminated string');
+      if (!closed) throw new Error('unterminated string');
       push('str', out);
       continue;
     }
@@ -2195,9 +2646,13 @@ function tokenizeWhenExpr_(src) {
       i++;
       while (i < src.length && /[A-Za-z0-9_.]/.test(src[i])) i++;
       var id = src.slice(s, i);
-      if (id === 'true') push('bool', true);
-      else if (id === 'false') push('bool', false);
-      else if (id === 'null') push('null', null);
+      var normalizedId = id.toLowerCase();
+      if (normalizedId === 'and') push('op', '&&');
+      else if (normalizedId === 'or') push('op', '||');
+      else if (normalizedId === 'not') push('op', '!');
+      else if (normalizedId === 'true') push('bool', true);
+      else if (normalizedId === 'false') push('bool', false);
+      else if (normalizedId === 'null') push('null', null);
       else push('id', id);
       continue;
     }
@@ -2212,10 +2667,10 @@ function tokenizeWhenExpr_(src) {
  * 【whenExpr DSL 評価器】
  * 仕様に基づいて式を評価する（再帰下降パーサー）
  * 
- * 優先順位: NOT > 比較 > AND > OR
+ * 優先順位: NOT > 加算 > 比較 > AND > OR
  * 
  * @param {string} expr - 評価する式
- * @param {Object} vars - 変数辞書（score1..score5 など）
+ * @param {Object} vars - 変数辞書（score1..score5 など。total は score1..5 から自動計算）
  * @return {boolean} 評価結果
  * @throws {Error} 構文エラー時
  */
@@ -2268,12 +2723,22 @@ function evalWhenExpr_(expr, vars) {
 
   // 比較: 優先順位2
   function parseComparison_() {
-    var left = parsePrimary_();
+    var left = parseAddition_();
     var t = peek_();
     if (t && t.t === 'op' && (t.v === '==' || t.v === '!=' || t.v === '>=' || t.v === '<=' || t.v === '>' || t.v === '<')) {
       var op = next_().v;
-      var right = parsePrimary_();
+      var right = parseAddition_();
       return compare_(left, op, right);
+    }
+    return left;
+  }
+
+  // 加算: 左結合、数値として解釈できない値は 0 扱い
+  function parseAddition_() {
+    var left = parsePrimary_();
+    while (matchOp_('+')) {
+      var right = parsePrimary_();
+      left = toNumberForArithmetic_(left) + toNumberForArithmetic_(right);
     }
     return left;
   }
@@ -2291,9 +2756,9 @@ function evalWhenExpr_(expr, vars) {
     t = next_();
     if (t.t === 'num' || t.t === 'str' || t.t === 'bool' || t.t === 'null') return t.v;
     if (t.t === 'id') {
-      // 未定義変数は undefined を返す（null 扱い）
-      var value = getVarByPath_(vars, t.v);
-      return value;
+      // 未定義変数は null 扱い。total は score1〜score5 から都度計算する。
+      var value = getWhenExprVar_(vars, t.v);
+      return (value === undefined) ? null : value;
     }
     throw new Error('unexpected token');
   }
@@ -2303,8 +2768,86 @@ function evalWhenExpr_(expr, vars) {
   return toBoolean_(result);
 }
 
+function normalizeRuleTargetName_(v) {
+  var s = String(v == null ? '' : v).trim();
+  return s || '講評・改善点';
+}
+
 /**
- * ルール適用（先頭マッチ1件のみ）
+ * _rules を target ごとに評価する。クライアント側 evaluateRulesLocallyMulti_ と同じ仕様。
+ * - priority順に並んだ rules を走査し、targetごとに最初にマッチした1件だけ採用する
+ * - enabled が false の行、構文エラーの whenExpr はスキップする
+ * - message は evaluateRuleMessage_ で評価する
+ * @param {Array<Object>} rules
+ * @param {Array<string>} headers
+ * @param {Object} vars
+ * @param {Array<{target:string}>} slotsResolved
+ * @param {Array<string>} slotLabels
+ * @return {{outputs:Array<string>, matchedRowNumberForSlot1:(number|null), error:(string|null)}}
+ */
+function evaluateRulesByTarget_(rules, headers, vars, slotsResolved, slotLabels) {
+  var slots = Array.isArray(slotsResolved) ? slotsResolved : [];
+  var out = ['', '', ''];
+  if (!Array.isArray(rules) || !rules.length || !Array.isArray(headers)) {
+    return { outputs: out, matchedRowNumberForSlot1: null, error: null };
+  }
+
+  var whenKey = findKey_(headers, ['whenexpr', 'when', 'expr', 'condition', 'if']);
+  var textKey = findRuleMessageKey_(headers);
+  var enabledKey = findKey_(headers, ['enabled', 'enable', 'active', 'isenabled', 'isactive']);
+  var targetKey = findKey_(headers, ['target', 'dest', 'group', 'outputtarget']);
+
+  if (!whenKey) return { outputs: out, matchedRowNumberForSlot1: null, error: 'whenExpr列が見つかりません' };
+  if (!textKey) return { outputs: out, matchedRowNumberForSlot1: null, error: 'message列が見つかりません' };
+
+  var matchedByTarget = {};
+  var rowByTarget = {};
+  var labels = Array.isArray(slotLabels) ? slotLabels : [];
+
+  for (var i = 0; i < rules.length; i++) {
+    var rule = rules[i];
+    if (!rule || typeof rule !== 'object') continue;
+
+    if (enabledKey && !isEnabled_(rule[enabledKey])) continue;
+
+    var whenExpr = rule[whenKey];
+    if (!whenExpr || typeof whenExpr !== 'string') whenExpr = String(whenExpr || '').trim();
+
+    var isMatch = false;
+    if (!whenExpr) {
+      isMatch = true;
+    } else {
+      try {
+        isMatch = evalWhenExpr_(whenExpr, vars || {});
+      } catch (e) {
+        continue;
+      }
+    }
+    if (!isMatch) continue;
+
+    var targetName = targetKey ? normalizeRuleTargetName_(rule[targetKey]) : '講評・改善点';
+    if (matchedByTarget.hasOwnProperty(targetName)) continue;
+
+    var text = evaluateRuleMessage_(rule[textKey], vars || {}, labels);
+    matchedByTarget[targetName] = (text === null || text === undefined) ? '' : String(text);
+    rowByTarget[targetName] = rule._rowNumber || null;
+  }
+
+  for (var s = 0; s < 3; s++) {
+    var slot = slots[s];
+    if (!slot || !slot.target) continue;
+    var slotTarget = normalizeRuleTargetName_(slot.target);
+    out[s] = matchedByTarget[slotTarget] || '';
+  }
+
+  var slot1Target = slots[0] && slots[0].target ? normalizeRuleTargetName_(slots[0].target) : '講評・改善点';
+  var matchedRowNumberForSlot1 = rowByTarget.hasOwnProperty(slot1Target) ? rowByTarget[slot1Target] : null;
+  return { outputs: out, matchedRowNumberForSlot1: matchedRowNumberForSlot1, error: null };
+}
+
+/**
+ * ルール適用（後方互換用。先頭マッチ1件のみ）
+ * 現行UIの最大3枠出力と同じ評価を確認したい場合は evaluateRulesByTarget_ を使う。
  * @param {{templateId:string, vars:Object}} params
  * @return {{ok:boolean, templateId?:string, text:string, matched:boolean, matchedRowNumber?:number|null, skipped:{disabled:number,invalidPriority:number,invalidExpr:number,invalidRow:number}, error?:string}}
  */
@@ -2321,7 +2864,7 @@ function apiApplyRules(params) {
       };
     }
     var templateIdNorm = normalizeTemplateId_(templateIdRaw);
-    var vars = (params && isPlainObject_(params.vars)) ? params.vars : {};
+    var vars = normalizeRuleVarsForEvaluation_((params && isPlainObject_(params.vars)) ? params.vars : {});
     var cfgForRules = apiGetConfig();
     var slotLabelsForRules = cfgForRules && Array.isArray(cfgForRules.slotLabels) ? cfgForRules.slotLabels : [];
 
@@ -2385,7 +2928,7 @@ function apiApplyRules(params) {
     var res = readSheetObjects_(sheet);
     var templateIdKey = findKey_(res.headers, ['templateid', 'template']);
     var whenKey = findKey_(res.headers, ['whenexpr', 'when', 'expr', 'condition', 'if']);
-    var textKey = findKey_(res.headers, ['message']);
+    var textKey = findRuleMessageKey_(res.headers);
     var enabledKey = findKey_(res.headers, ['enabled', 'enable', 'active', 'isenabled', 'isactive']);
     var priorityKey = findKey_(res.headers, ['priority', 'prio', 'order', 'rank']);
 
@@ -2416,7 +2959,7 @@ function apiApplyRules(params) {
         text: '',
         matched: false,
         skipped: { disabled: 0, invalidPriority: 0, invalidExpr: 0, invalidRow: 0 },
-        error: 'text column not found in _rules'
+        error: 'message column not found in _rules'
       };
     }
     if (!enabledKey) {

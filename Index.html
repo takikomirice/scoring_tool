@@ -1028,6 +1028,15 @@
               <input id="importConfigFileInput" type="file" accept=".json,.txt,application/json,text/plain" style="display:none;" />
               <div id="exportResult" style="margin-top:8px; font-size:12px; color:#666; display:none; white-space:pre-wrap; word-break:break-all;"></div>
             </div>
+            <div style="margin-top:12px; padding-top:12px; border-top:1px solid var(--line-soft);">
+              <div style="font-size:13px; font-weight:900; margin-bottom:8px;">テンプレパックのエクスポート/インポート</div>
+              <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                <button id="exportTemplatePackBtn" type="button">テンプレパックをエクスポート</button>
+                <button id="importTemplatePackBtn" type="button">テンプレパックをインポート</button>
+              </div>
+              <input id="importTemplatePackFileInput" type="file" accept=".json,.txt,application/json,text/plain" style="display:none;" />
+              <div id="templatePackResult" style="margin-top:8px; font-size:12px; color:#666; display:none; white-space:pre-wrap; word-break:break-all;"></div>
+            </div>
           </div>
       </section>
     </div>
@@ -1176,6 +1185,10 @@
         els.restoreConfigBtn = $('restoreConfigBtn');
         els.importConfigFileInput = $('importConfigFileInput');
         els.exportResult = $('exportResult');
+        els.importTemplatePackBtn = $('importTemplatePackBtn');
+        els.exportTemplatePackBtn = $('exportTemplatePackBtn');
+        els.importTemplatePackFileInput = $('importTemplatePackFileInput');
+        els.templatePackResult = $('templatePackResult');
         els.spreadsheetUrlInput = $('spreadsheetUrlInput');
         els.loadSpreadsheetBtn = $('loadSpreadsheetBtn');
         els.openTargetSpreadsheetBtn = $('openTargetSpreadsheetBtn');
@@ -1525,6 +1538,21 @@
         if (els.exportConfigBtn) {
           els.exportConfigBtn.addEventListener('click', function () {
             exportConfig();
+          });
+        }
+        if (els.importTemplatePackBtn) {
+          els.importTemplatePackBtn.addEventListener('click', function () {
+            if (!els.importTemplatePackFileInput) return;
+            els.importTemplatePackFileInput.value = '';
+            els.importTemplatePackFileInput.click();
+          });
+        }
+        if (els.importTemplatePackFileInput) {
+          els.importTemplatePackFileInput.addEventListener('change', handleImportTemplatePackFile_);
+        }
+        if (els.exportTemplatePackBtn) {
+          els.exportTemplatePackBtn.addEventListener('click', function () {
+            exportTemplatePack();
           });
         }
         if (els.restoreConfigBtn) {
@@ -2346,6 +2374,19 @@
         return '';
       }
 
+      function findRuleMessageKey_(headers) {
+        var candidates = ['message', 'text', 'output', 'result', 'comment'];
+        var list = Array.isArray(headers) ? headers : [];
+        for (var c = 0; c < candidates.length; c++) {
+          for (var i = 0; i < list.length; i++) {
+            var h = list[i];
+            if (!h) continue;
+            if (normalizeHeaderKey_(h) === candidates[c]) return h;
+          }
+        }
+        return '';
+      }
+
       function loadRuleTemplates_(selectedTemplateId) {
         if (!els.ruleTemplateSelect) return;
         els.ruleTemplateSelect.innerHTML = '<option value="">読み込み中...</option>';
@@ -2577,7 +2618,7 @@
             // 条件式の表示名（任意）：whenLabel 列があれば優先して表示する
             // - "whenLabel" / "when_label" / "when label" は normalizeHeaderKey_ により同一扱い（whenlabel）
             var whenLabelKey = findHeaderKey_(headers, ['whenlabel']);
-            var messageKey = findHeaderKey_(headers, ['message', 'text', 'output', 'result', 'comment']);
+            var messageKey = findRuleMessageKey_(headers);
             var priorityKey = findHeaderKey_(headers, ['priority', 'prio', 'order', 'rank']);
             var visibleKey = findHeaderKey_(headers, ['visible', 'show', 'display']);
 
@@ -2706,9 +2747,9 @@
         return sum;
       }
 
-      // mergeRule をクライアント側で計算する
-      // - 旧仕様: + / , / : / / / 単一スロット
-      // - 新仕様: & 連結 / label1..5 / "..." / map(x,"1=×,2=△") など
+      // message式をクライアント側で計算する
+      // - 公開仕様: & 連結 / label1..5 / "..." / map(x,"1=×,2=△") など
+      // - 内部互換: + / , / : / / / 単一スロット（採点値入力列の統合ルール用途では使わない）
       function computeMerge_(rule, slotValues, slotLabels) {
         // slotValues: [{ slot: number, value: any }]
         if (!rule || typeof rule !== 'string') return null;
@@ -2838,6 +2879,15 @@
             return { ok: true, value: labels[li - 1] || '' };
           }
 
+          // scoreN
+          var mScore = t.match(/^score\s*([1-5])$/i);
+          if (mScore) {
+            var si = parseInt(mScore[1], 10);
+            var scoreValue = valueMap.hasOwnProperty(si) ? valueMap[si] : null;
+            if (scoreValue === '' || scoreValue === null || scoreValue === undefined) return { ok: true, value: null };
+            return { ok: true, value: String(scoreValue) };
+          }
+
           // map(arg,"k=v,...")
           var mMap = t.match(/^map\s*\(([\s\S]*)\)$/i);
           if (mMap) {
@@ -2891,26 +2941,34 @@
           return out;
         }
 
-        function getSlotNumbers_(parts) {
-          var nums = [];
-          for (var i = 0; i < parts.length; i++) {
-            var n = parseInt(parts[i], 10);
-            if (isNaN(n) || n < 1 || n > 5) return null;
-            nums.push(n);
+        function getNumericToken_(token) {
+          var t = String(token || '').trim();
+          if (!t) return null;
+          var mScore = t.match(/^score\s*([1-5])$/i);
+          if (mScore) {
+            var si = parseInt(mScore[1], 10);
+            var scoreValue = valueMap.hasOwnProperty(si) ? valueMap[si] : null;
+            if (scoreValue === '' || scoreValue === null || scoreValue === undefined) return null;
+            var scoreNumber = parseFloat(scoreValue);
+            if (isNaN(scoreNumber)) return null;
+            return scoreNumber;
           }
-          return nums;
+          var slot = parseInt(t, 10);
+          if (isNaN(slot) || String(slot) !== t || slot < 1 || slot > 5) return null;
+          var v = valueMap[slot];
+          if (v === '' || v === null || v === undefined) return null;
+          var n = parseFloat(v);
+          if (isNaN(n)) return null;
+          return n;
         }
 
-        // 合計: 1+2+3（数値のみ）
+        // 合計: 1+2+3 または score1+score2（数値のみ）
         if (text.indexOf('+') >= 0) {
           var sumParts = text.split('+').map(function (p) { return p.trim(); });
-          var slots = getSlotNumbers_(sumParts);
-          if (!slots) return null;
           var total = 0;
-          for (var i = 0; i < slots.length; i++) {
-            var v = valueMap[slots[i]];
-            var n = parseFloat(v);
-            if (isNaN(n)) return null;
+          for (var i = 0; i < sumParts.length; i++) {
+            var n = getNumericToken_(sumParts[i]);
+            if (n == null) return null;
             total += n;
           }
           return total;
@@ -2919,14 +2977,10 @@
         // 配列: 1,2,3 → "[1,2,3]"（数値のみ）
         if (text.indexOf(',') >= 0) {
           var arrParts = text.split(',').map(function (p) { return p.trim(); });
-          var slotsArr = getSlotNumbers_(arrParts);
-          if (!slotsArr) return null;
           var arr = [];
-          for (var j = 0; j < slotsArr.length; j++) {
-            var vv = valueMap[slotsArr[j]];
-            if (vv === '' || vv === null || vv === undefined) return null;
-            var num = parseFloat(vv);
-            if (isNaN(num)) return null;
+          for (var j = 0; j < arrParts.length; j++) {
+            var num = getNumericToken_(arrParts[j]);
+            if (num == null) return null;
             arr.push(num);
           }
           return '[' + arr.join(',') + ']';
@@ -2936,50 +2990,67 @@
         if (text.indexOf(':') >= 0 || text.indexOf('/') >= 0) {
           var sep = text.indexOf(':') >= 0 ? ':' : '/';
           var concatParts = text.split(sep).map(function (p) { return p.trim(); });
-          var slotsConcat = getSlotNumbers_(concatParts);
-          if (!slotsConcat) return null;
           var strs = [];
-          for (var k = 0; k < slotsConcat.length; k++) {
-            var vv2 = valueMap[slotsConcat[k]];
-            if (vv2 === '' || vv2 === null || vv2 === undefined) return null;
-            var num2 = parseFloat(vv2);
-            if (isNaN(num2)) return null;
+          for (var k = 0; k < concatParts.length; k++) {
+            var num2 = getNumericToken_(concatParts[k]);
+            if (num2 == null) return null;
             strs.push(String(num2));
           }
           return strs.join(sep);
         }
 
         // 単一スロット参照（数値のみ。旧仕様維持）
-        var single = parseInt(text, 10);
-        if (!isNaN(single) && String(single) === text && single >= 1 && single <= 5) {
-          var sv = valueMap[single];
-          if (sv === '' || sv === null || sv === undefined) return null;
-          var nSingle = parseFloat(sv);
-          if (isNaN(nSingle)) return null;
+        var nSingle = getNumericToken_(text);
+        if (nSingle != null) {
           return nSingle;
         }
 
         return null;
       }
 
-      // ルールAPIへ渡す vars を作る（score1..5）
+      function evaluateRuleMessageLocal_(rawText, evalVars, slotLabels) {
+        // サーバー側 evaluateRuleMessage_ と同じ仕様。
+        // & / label / map を使う新構文と + の単純加算は同一式内で混在させない。
+        var original = (rawText === null || rawText === undefined) ? '' : String(rawText);
+        var trimmed = original.trim();
+        if (!trimmed) return '';
+        if (trimmed.charAt(0) === '\'') return trimmed.slice(1);
+        if (trimmed.charAt(0) !== '=') return original;
+
+        var expr = trimmed.slice(1).trim();
+        if (!expr) return '';
+
+        var vars = (evalVars && typeof evalVars === 'object') ? evalVars : {};
+        var slotValues = [];
+        for (var i = 1; i <= 5; i++) {
+          var key = 'score' + i;
+          var v = vars.hasOwnProperty(key) ? vars[key] : null;
+          slotValues.push({ slot: i, value: v });
+        }
+        var out = computeMerge_(expr, slotValues, slotLabels || []);
+        if (out === null || out === undefined) return '';
+        return String(out);
+      }
+
+      // ルールAPIへ渡す vars を作る（score1..5 / total）
       function buildRuleVars_(scores) {
         var scoreNums = [null, null, null, null, null];
         
         // すべてのスコア値を変数として利用可能にする
         for (var i = 0; i < 5; i++) {
           var value = scores[i];
-          var n = parseFloat(value);
+          var n = toNumberIfNumeric_(value);
           if (!isNaN(n)) {
             scoreNums[i] = n;
           }
         }
         
-        // vars構築（score1..5）
+        // vars構築（score1..5 / total）
         var vars = {};
         for (var i = 0; i < 5; i++) {
           vars['score' + (i + 1)] = scoreNums[i];
         }
+        vars.total = computeWhenExprTotal_(vars);
 
         return vars;
       }
@@ -3045,6 +3116,24 @@
         return NaN;
       }
 
+      function toNumberForArithmetic_(v) {
+        var n = toNumberIfNumeric_(v);
+        return isNaN(n) ? 0 : n;
+      }
+
+      function computeWhenExprTotal_(vars) {
+        var sum = 0;
+        for (var i = 1; i <= 5; i++) {
+          sum += toNumberForArithmetic_(getVarByPath_(vars || {}, 'score' + i));
+        }
+        return sum;
+      }
+
+      function getWhenExprVar_(vars, name) {
+        if (String(name || '') === 'total') return computeWhenExprTotal_(vars || {});
+        return getVarByPath_(vars || {}, name);
+      }
+
       /**
        * 比較演算を実行（whenExpr仕様準拠）
        * @param {*} a - 左辺
@@ -3088,7 +3177,7 @@
 
       /**
        * whenExprをトークン化
-       * and/or/not と &&/||/! を同じ種別に正規化
+       * and/or/not と &&/||/! を同じ種別に正規化し、+ を数値加算として扱う
        * @param {string} expr - 式文字列
        * @return {Array<{type:string, value:*}>} トークン配列
        * @throws {Error} 構文エラー時
@@ -3132,7 +3221,7 @@
             i++;
             continue;
           }
-          if (ch === '!' || ch === '>' || ch === '<') {
+          if (ch === '!' || ch === '>' || ch === '<' || ch === '+') {
             push('op', ch);
             i++;
             continue;
@@ -3143,6 +3232,7 @@
             var quote = ch;
             i++;
             var out = '';
+            var closed = false;
             while (i < expr.length) {
               var c = expr[i];
               if (c === '\\') {
@@ -3158,12 +3248,13 @@
               }
               if (c === quote) {
                 i++;
+                closed = true;
                 break;
               }
               out += c;
               i++;
             }
-            if (i > expr.length) {
+            if (!closed) {
               throw new Error('文字列が閉じられていません');
             }
             push('string', out);
@@ -3190,19 +3281,20 @@
             i++;
             while (i < expr.length && /[A-Za-z0-9_.]/.test(expr[i])) i++;
             var id = expr.slice(s, i);
+            var normalizedId = id.toLowerCase();
             
             // 予約語を正規化
-            if (id === 'and') {
+            if (normalizedId === 'and') {
               push('op', '&&');
-            } else if (id === 'or') {
+            } else if (normalizedId === 'or') {
               push('op', '||');
-            } else if (id === 'not') {
+            } else if (normalizedId === 'not') {
               push('op', '!');
-            } else if (id === 'true') {
+            } else if (normalizedId === 'true') {
               push('boolean', true);
-            } else if (id === 'false') {
+            } else if (normalizedId === 'false') {
               push('boolean', false);
-            } else if (id === 'null') {
+            } else if (normalizedId === 'null') {
               push('null', null);
             } else {
               push('identifier', id);
@@ -3218,7 +3310,7 @@
 
       /**
        * トークン列をASTにパース（再帰下降パーサー）
-       * 優先順位: NOT > 比較 > AND > OR
+       * 優先順位: NOT > 加算 > 比較 > AND > OR
        * @param {Array} tokens - トークン配列
        * @return {Object} ASTノード
        * @throws {Error} 構文エラー時
@@ -3280,12 +3372,23 @@
 
         // 比較（優先順位2）
         function parseCompare() {
-          var left = parsePrimary();
+          var left = parseAddition();
           var t = peek();
           if (t && t.type === 'op' && (t.value === '==' || t.value === '!=' || t.value === '>=' || t.value === '<=' || t.value === '>' || t.value === '<')) {
             var op = next().value;
-            var right = parsePrimary();
+            var right = parseAddition();
             return { type: 'compare', op: op, left: left, right: right };
+          }
+          return left;
+        }
+
+        // 加算（左結合、数値として解釈できない値は0扱い）
+        function parseAddition() {
+          var left = parsePrimary();
+          while (peek() && peek().type === 'op' && peek().value === '+') {
+            next();
+            var right = parsePrimary();
+            left = { type: 'binary', op: '+', left: left, right: right };
           }
           return left;
         }
@@ -3332,9 +3435,16 @@
             return ast.value;
 
           case 'variable': {
-            var v = getVarByPath_(evalVars, ast.name);
+            var v = getWhenExprVar_(evalVars, ast.name);
             return (v === undefined) ? null : v; // 未定義はnull扱い
           }
+
+          case 'binary':
+            if (ast.op === '+') {
+              return toNumberForArithmetic_(evaluateWhenValue(ast.left, evalVars)) +
+                toNumberForArithmetic_(evaluateWhenValue(ast.right, evalVars));
+            }
+            throw new Error('未知の二項演算子: ' + ast.op);
 
           // compare/logical/unary は「値」というより boolean を返すノードだが、
           // 上位が値として扱う可能性があるので boolean のまま返す
@@ -3657,15 +3767,16 @@
 
         // ヘッダー名を取得
         var whenKey = findHeaderKey_(headers, ['whenexpr', 'when', 'expr', 'condition', 'if']);
-        var textKey = findHeaderKey_(headers, ['text', 'output', 'result', 'comment', 'message']);
+        var textKey = findRuleMessageKey_(headers);
         var enabledKey = findHeaderKey_(headers, ['enabled', 'enable', 'active', 'isenabled', 'isactive']);
 
         if (!whenKey) {
           return { matched: false, rule: null, rowNumber: null, error: 'whenExpr列が見つかりません' };
         }
         if (!textKey) {
-          return { matched: false, rule: null, rowNumber: null, error: 'text列が見つかりません' };
+          return { matched: false, rule: null, rowNumber: null, error: 'message列が見つかりません' };
         }
+        var slotLabelsForRules = normalizeSlotLabels_(state && state.config && state.config.slotLabels ? state.config.slotLabels : []);
 
         // ルール配列を優先度順に走査（既にソート済み）
         for (var i = 0; i < rules.length; i++) {
@@ -3689,10 +3800,12 @@
           // 空のwhenExprは常にtrue
           if (!whenExpr) {
             var text = rule[textKey];
+            var evaluatedText = evaluateRuleMessageLocal_(text, evalVars, slotLabelsForRules);
             var rowNumber = rule._rowNumber || null;
             return {
               matched: true,
               rule: rule,
+              text: evaluatedText,
               rowNumber: rowNumber,
               error: null
             };
@@ -3708,10 +3821,12 @@
           if (evalResult.result === true) {
             // マッチしたルールを返す
             var text = rule[textKey];
+            var evaluatedText = evaluateRuleMessageLocal_(text, evalVars, slotLabelsForRules);
             var rowNumber = rule._rowNumber || null;
             return {
               matched: true,
               rule: rule,
+              text: evaluatedText,
               rowNumber: rowNumber,
               error: null
             };
@@ -3741,16 +3856,17 @@
         }
 
         var whenKey = findHeaderKey_(headers, ['whenexpr', 'when', 'expr', 'condition', 'if']);
-        var textKey = findHeaderKey_(headers, ['text', 'output', 'result', 'comment', 'message']);
+        var textKey = findRuleMessageKey_(headers);
         var enabledKey = findHeaderKey_(headers, ['enabled', 'enable', 'active', 'isenabled', 'isactive']);
         var targetKey = findHeaderKey_(headers, ['target', 'dest', 'group', 'outputtarget']);
 
         if (!whenKey) return { outputs: out, matchedRowNumberForSlot1: null, error: 'whenExpr列が見つかりません' };
-        if (!textKey) return { outputs: out, matchedRowNumberForSlot1: null, error: 'text列が見つかりません' };
+        if (!textKey) return { outputs: out, matchedRowNumberForSlot1: null, error: 'message列が見つかりません' };
 
         // target→text（最初のマッチのみ）
         var matchedByTarget = {};
         var rowByTarget = {};
+        var slotLabelsForRules = normalizeSlotLabels_(state && state.config && state.config.slotLabels ? state.config.slotLabels : []);
 
         for (var i = 0; i < rules.length; i++) {
           var rule = rules[i];
@@ -3777,8 +3893,8 @@
           var tName = targetKey ? normalizeTargetName_(rule[targetKey]) : '講評・改善点';
           if (matchedByTarget.hasOwnProperty(tName)) continue; // 既に埋まっているtargetはスキップ
 
-          var text = rule[textKey];
-          matchedByTarget[tName] = (text === null || text === undefined) ? '' : String(text).trim();
+          var text = evaluateRuleMessageLocal_(rule[textKey], evalVars, slotLabelsForRules);
+          matchedByTarget[tName] = (text === null || text === undefined) ? '' : String(text);
           rowByTarget[tName] = rule._rowNumber || null;
         }
 
@@ -3820,7 +3936,7 @@
        * 
        * 処理フロー:
        * 1. buildScoresForCalc_() → UI入力値（els.scoreInputs）を取得
-       * 2. buildRuleVars_(scores) → varsオブジェクト構築（score1..score5）
+       * 2. buildRuleVars_(scores) → varsオブジェクト構築（score1..score5 / total）
        * 3. buildEvalVars(vars) → evalVarsオブジェクト構築
        * 4. デバウンス処理（200ms）で連続入力をまとめる
        * 5. evaluateRulesLocally_() → ローカルでルール評価（state.currentRules を使用）
@@ -5012,6 +5128,48 @@
           .apiExportConfig();
       }
 
+      function showTemplatePackResult_(text, color) {
+        if (!els.templatePackResult) return;
+        els.templatePackResult.textContent = text;
+        els.templatePackResult.style.display = 'block';
+        els.templatePackResult.style.color = color || '#666';
+      }
+
+      function copyTextForExport_(text) {
+        var textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        try {
+          document.execCommand('copy');
+          return true;
+        } catch (e) {
+          return false;
+        } finally {
+          document.body.removeChild(textarea);
+        }
+      }
+
+      function exportTemplatePack() {
+        showTemplatePackResult_('テンプレパックをエクスポート中...', '#666');
+
+        google.script.run
+          .withSuccessHandler(function (result) {
+            var json = JSON.stringify(result, null, 2);
+            if (copyTextForExport_(json)) {
+              showTemplatePackResult_('テンプレパックのエクスポート完了（クリップボードにコピーしました）', '#2e7d32');
+            } else {
+              showTemplatePackResult_('テンプレパックのエクスポート完了（コピーに失敗しました。下記を手動でコピーしてください）:\n\n' + json, '#666');
+            }
+          })
+          .withFailureHandler(function (err) {
+            showTemplatePackResult_('テンプレパックのエクスポートエラー: ' + (err && err.message ? err.message : err), '#d32f2f');
+          })
+          .apiExportTemplatePack();
+      }
+
       function handleImportConfigFile_(ev) {
         var file = ev && ev.target && ev.target.files && ev.target.files[0] ? ev.target.files[0] : null;
         if (!file) return;
@@ -5053,6 +5211,48 @@
           els.exportResult.textContent = 'インポートエラー: ファイルを読み込めませんでした';
           els.exportResult.style.display = 'block';
           els.exportResult.style.color = '#d32f2f';
+        };
+        reader.readAsText(file, 'UTF-8');
+      }
+
+      function handleImportTemplatePackFile_(ev) {
+        var file = ev && ev.target && ev.target.files && ev.target.files[0] ? ev.target.files[0] : null;
+        if (!file) return;
+
+        var reader = new FileReader();
+        reader.onload = function (e) {
+          var text = String((e && e.target && e.target.result) || '');
+          var payload = null;
+          try {
+            payload = JSON.parse(text);
+          } catch (err) {
+            showTemplatePackResult_('テンプレパックのインポートエラー: JSONの形式が不正です', '#d32f2f');
+            return;
+          }
+
+          if (!window.confirm('テンプレパックを _templates / _rules に追加します。同じtemplateIdが既にある場合は取り込みません。続行しますか？')) {
+            return;
+          }
+
+          showTemplatePackResult_('テンプレパックをインポート中...', '#666');
+
+          google.script.run
+            .withSuccessHandler(function (res) {
+              var imported = res && res.imported ? res.imported : { templates: 0, rules: 0 };
+              showTemplatePackResult_(
+                'テンプレパックのインポート完了: テンプレート ' + imported.templates + ' 件、ルール ' + imported.rules + ' 件',
+                '#2e7d32'
+              );
+              var currentTemplateId = state.config && state.config.ruleTemplateId ? state.config.ruleTemplateId : '';
+              loadRuleTemplates_(currentTemplateId);
+            })
+            .withFailureHandler(function (err2) {
+              showTemplatePackResult_('テンプレパックのインポートエラー: ' + (err2 && err2.message ? err2.message : err2), '#d32f2f');
+            })
+            .apiImportTemplatePack(payload);
+        };
+        reader.onerror = function () {
+          showTemplatePackResult_('テンプレパックのインポートエラー: ファイルを読み込めませんでした', '#d32f2f');
         };
         reader.readAsText(file, 'UTF-8');
       }
@@ -5202,6 +5402,20 @@
             setStatus('設定取得エラー: ' + (err && err.message ? err.message : err), 'error');
           })
           .apiGetConfig();
+      }
+
+      if (typeof window !== 'undefined' && window.__SCORING_TOOL_ENABLE_TEST_HOOKS__) {
+        window.__scoringToolTestHooks = {
+          buildRuleVars_: buildRuleVars_,
+          buildEvalVars: buildEvalVars,
+          computeMerge_: computeMerge_,
+          evaluateRuleMessageLocal_: evaluateRuleMessageLocal_,
+          evaluateWhenExprSafe: evaluateWhenExprSafe,
+          evaluateRulesLocallyMulti_: evaluateRulesLocallyMulti_,
+          findRuleMessageKey_: findRuleMessageKey_,
+          parseWhenExpr: parseWhenExpr,
+          tokenizeWhenExpr: tokenizeWhenExpr
+        };
       }
 
       function onLoad() {

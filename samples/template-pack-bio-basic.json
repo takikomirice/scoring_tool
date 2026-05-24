@@ -1,0 +1,44 @@
+{
+  "meta": {
+    "type": "scoring-tool-template-pack",
+    "version": "0.1.0",
+    "name": "生物基礎・記述サンプル",
+    "exportedAt": "2026-05-24T00:00:00.000Z"
+  },
+  "templates": [
+    {
+      "templateId": "bio_basic",
+      "name": "生物基礎・記述",
+      "enabled": true
+    }
+  ],
+  "rules": [
+    {
+      "templateId": "bio_basic",
+      "target": "講評",
+      "priority": 10,
+      "whenExpr": "score1 + score2 >= 7 and score3 >= 3",
+      "message": "根拠と用語の使い方が安定しており、設問の要求に沿って説明できています。",
+      "enabled": true,
+      "visible": true
+    },
+    {
+      "templateId": "bio_basic",
+      "target": "講評",
+      "priority": 20,
+      "whenExpr": "total >= 6",
+      "message": "基本事項は押さえられています。記述では、因果関係をもう一段具体的に示すとより伝わりやすくなります。",
+      "enabled": true,
+      "visible": true
+    },
+    {
+      "templateId": "bio_basic",
+      "target": "改善点",
+      "priority": 30,
+      "whenExpr": "total < 6",
+      "message": "重要語句を確認し、観察できる事実と理由を分けて書く練習をしましょう。",
+      "enabled": true,
+      "visible": true
+    }
+  ]
+}
