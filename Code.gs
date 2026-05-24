@@ -1150,11 +1150,13 @@ function saveRowToSheet_(cfg, sheet, row) {
 }
 
 // -----------------------------
-// message式/旧互換DSL評価エンジン
+// message式評価エンジン
 // -----------------------------
 
 /**
- * message式/旧互換DSLを評価
+ * message式を評価する。
+ * v1.0.0候補の公開仕様では _rules.message 先頭が "=" の場合だけ使う。
+ * 数値スロット表記（1+2など）は内部互換のため残すが、採点値入力列の統合ルール用途では使わない。
  * @param {string} rule - 式（例: "1+2+3", "1,2,3", "1:2"）
  * @param {Array<{slot:number,value:*}>} slotValues - スロット番号と値の配列
  * @return {*} 評価結果（数値または文字列、エラー時はnull）
@@ -1421,7 +1423,7 @@ function evaluateMergeRule_(rule, slotValues, slotLabels, varsRaw) {
 /**
  * _rules の本文を評価する。
  * - 通常文: そのまま返す
- * - "=..." で始まる場合: 統合DSLとして評価して文字列化
+ * - "=..." で始まる場合: message式として評価して文字列化
  * - 現行DSLでは、& / label / map を使う新構文と + の単純加算を同一式内で混在させない
  */
 function evaluateRuleMessage_(rawText, vars, slotLabels) {
@@ -2512,6 +2514,22 @@ function computeWhenExprTotal_(vars) {
   return sum;
 }
 
+function normalizeRuleVarsForEvaluation_(vars) {
+  var input = isPlainObject_(vars) ? vars : {};
+  var out = {};
+  for (var key in input) {
+    if (input.hasOwnProperty(key)) out[key] = input[key];
+  }
+  for (var i = 1; i <= 5; i++) {
+    var scoreKey = 'score' + i;
+    var raw = input.hasOwnProperty(scoreKey) ? input[scoreKey] : null;
+    var n = toNumberIfNumeric_(raw);
+    out[scoreKey] = isNaN(n) ? null : n;
+  }
+  out.total = computeWhenExprTotal_(out);
+  return out;
+}
+
 function getWhenExprVar_(vars, name) {
   if (String(name || '') === 'total') return computeWhenExprTotal_(vars || {});
   return getVarByPath_(vars || {}, name);
@@ -2860,7 +2878,7 @@ function apiApplyRules(params) {
       };
     }
     var templateIdNorm = normalizeTemplateId_(templateIdRaw);
-    var vars = (params && isPlainObject_(params.vars)) ? params.vars : {};
+    var vars = normalizeRuleVarsForEvaluation_((params && isPlainObject_(params.vars)) ? params.vars : {});
     var cfgForRules = apiGetConfig();
     var slotLabelsForRules = cfgForRules && Array.isArray(cfgForRules.slotLabels) ? cfgForRules.slotLabels : [];
 

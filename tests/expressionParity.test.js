@@ -110,6 +110,15 @@ test('クライアントの total は非数値スコアをサーバー同様に0
   }
 });
 
+test('サーバーは外部入力varsをクライアント評価と同じ形へ正規化できる', () => {
+  const gas = loadCodeGs();
+
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(gas.normalizeRuleVarsForEvaluation_({ score1: '3', score2: '3a', score3: '', score4: null, score5: 2, extra: 'keep' }))),
+    { score1: 3, score2: null, score3: null, score4: null, score5: 2, extra: 'keep', total: 5 }
+  );
+});
+
 test('サーバーとクライアントは whenExpr の未閉じ文字列を構文エラーにする', () => {
   const gas = loadCodeGs();
   const client = loadClientHooks();

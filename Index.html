@@ -2747,9 +2747,9 @@
         return sum;
       }
 
-      // mergeRule をクライアント側で計算する
-      // - 旧仕様: + / , / : / / / 単一スロット
-      // - 新仕様: & 連結 / label1..5 / "..." / map(x,"1=×,2=△") など
+      // message式をクライアント側で計算する
+      // - 公開仕様: & 連結 / label1..5 / "..." / map(x,"1=×,2=△") など
+      // - 内部互換: + / , / : / / / 単一スロット（採点値入力列の統合ルール用途では使わない）
       function computeMerge_(rule, slotValues, slotLabels) {
         // slotValues: [{ slot: number, value: any }]
         if (!rule || typeof rule !== 'string') return null;

@@ -131,7 +131,7 @@
     </div>
     <details>
       <summary>map/変換表の説明</summary>
-      <div class="hint">画面では「点数を文言に変換」として扱います。式ウインドウには message式のDSLが生成されるので、必要なら直接編集できます。</div>
+      <div class="hint">画面では「点数を文言に変換」として扱います。式ウインドウには message式のDSLが生成されるので、必要なら直接編集できます。変換表は <code>key=value</code> をカンマ区切りで書き、値の中にカンマは入れられません。</div>
     </details>
     <details>
       <summary>上級者向け</summary>
@@ -167,6 +167,7 @@
       <summary>上級者向け</summary>
       <div class="hint">
         `+` は数値加算、文字列連結は `&` です。message式を通常文として保存したい場合は先頭に `'` を付けます。
+        message式では `total` は使わず、入力済みのスコアだけを `score1+score2` のように足します。
       </div>
     </details>
   </section>
@@ -246,7 +247,7 @@
     { label: 'label3', token: 'label3' },
     { label: 'label4', token: 'label4' },
     { label: 'label5', token: 'label5' },
-    { label: '合計(message)', token: 'score1+score2+score3+score4+score5' },
+    { label: '加算(message)', token: 'score1+score2' },
     { label: '連結', token: ' & ""' },
     { label: '変換式', token: 'map(score1,"1=要確認,2=改善中,3=良好")' },
   ];
