@@ -1,0 +1,5221 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>採点くん</title>
+  <style>
+    :root{
+      --bg:#f6f6f6; --panel:#fff; --ink:#111; --muted:#666;
+      --line:#222; --line-soft:#bbb; --focus:#1a73e8;
+
+      --radius:10px; --pad:10px; --gap:8px;
+
+      /* 上段（生徒文）を固定高さ＋スクロール */
+      --answer-h: 300px;
+
+      /* 採点マス */
+      --grid-cols: 5;
+      --cell-h: var(--ctrl-h);
+
+      /* 右パネル（ルール表示）の固定高さ */
+      --rules-panel-h: 130px;
+
+      /* ===== 統一フォームスタイル ===== */
+      --ctrl-h: 34px;
+      --ctrl-r: 10px;
+      --ctrl-b: 2px;
+    }
+
+    *{ box-sizing:border-box; }
+    body{
+      margin:0;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans JP", "Hiragino Sans", "Yu Gothic", sans-serif;
+      color:var(--ink);
+      background:var(--bg);
+    }
+    .wrap{ max-width:1200px; margin:0 auto; padding:14px; }
+    .frame{
+      background:var(--panel);
+      border:2px solid var(--line);
+      border-radius:var(--radius);
+      padding:var(--pad);
+    }
+    /* ===== 設定モーダル ===== */
+    .modal{
+      position:fixed;
+      inset:0;
+      display:none;
+      align-items:center;
+      justify-content:center;
+      z-index:100;
+    }
+    .modal-backdrop{
+      position:absolute;
+      inset:0;
+      background: rgba(0,0,0,0.35);
+    }
+    .modal-content{
+      position:relative;
+      width: min(980px, calc(100vw - 24px));
+      max-height: min(86vh, calc(100vh - 24px));
+      overflow:auto;
+      z-index:101;
+    }
+    .modal-top{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+    }
+    .modal-close{
+      border:1px solid var(--line-soft);
+      border-radius:10px;
+      background:#fff;
+      width:34px;
+      height:34px;
+      font-size:18px;
+      line-height:1;
+    }
+
+    /* ===== 上段：生徒文（縮めてスクロール） ===== */
+    .top{ display:grid; gap:var(--gap); }
+
+    .student-bar{
+      display:flex; align-items:baseline; gap:12px;
+      padding-bottom:6px;
+      border-bottom:1px solid var(--line-soft);
+    }
+    .student-name{ font-size:18px; font-weight:800; }
+    .student-meta{ font-size:13px; color:var(--muted); }
+    .student-controls{
+      margin-left:auto;
+      display:flex;
+      flex-wrap:wrap;
+      gap:8px;
+      align-items:flex-end;
+    }
+    .btn--xs{
+      height: var(--ctrl-h);
+      padding:0 10px;
+      font-size:12px;
+    }
+    .btn--icon{
+      height: var(--ctrl-h);
+      width: var(--ctrl-h);
+      padding:0;
+      font-size:16px;
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+    }
+
+    .answers{
+      border:1px solid var(--line-soft);
+      border-radius:8px;
+      padding:8px 10px;
+      background:#fff;
+      height: var(--answer-h);
+      resize: vertical;
+      min-height: 220px;
+      max-height: 70vh;
+      overflow:auto;
+    }
+
+    /* details/summary で“列ごと”を詰めて表示 */
+    details{ border-bottom:1px dashed var(--line-soft); padding:6px 0; }
+    details:last-child{ border-bottom:none; }
+    summary{
+      cursor:pointer;
+      display:flex; gap:10px; align-items:center;
+      font-size:13px; color:var(--muted);
+      list-style:none;
+      -webkit-user-select:none;
+      user-select:none;
+    }
+    summary::-webkit-details-marker{ display:none; }
+    .qtag{ font-weight:900; color:#333; }
+    .qcount{
+      font-weight:800;
+      color:var(--muted);
+      font-size:12px;
+      white-space:nowrap;
+    }
+    .answer-body{
+      white-space:pre-wrap;
+      line-height:1.55;
+      font-size:15px;
+      padding:8px 2px 4px;
+      color:#111;
+    }
+
+    /* ===== 講評（定型）を“複数行バー”で常時表示 ===== */
+    .advice-bar{
+      border:0;
+      border-top:1px solid var(--line-soft);
+      border-radius:0;
+      padding:8px 0 0;
+      background:transparent;
+      display:grid;
+      grid-template-columns: 1fr;
+      gap:6px;
+      align-items:stretch;
+      min-width:0;
+    }
+    .advice-row{
+      display:grid;
+      grid-template-columns: 120px 1fr auto;
+      gap:8px;
+      align-items:center;
+      min-width:0;
+    }
+    .advice-label{
+      font-weight:900;
+      color:#333;
+      font-size:13px;
+      white-space:nowrap;
+    }
+    .advice-text{
+      border:2px solid var(--line);
+      border-radius:8px;
+      padding:4px 6px;
+      height: 28px;
+      font-size:13px;
+      line-height:1.2;
+      background:#fff;
+      outline:none;
+      width:100%;
+      min-width:0;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+    }
+    .advice-text:focus{
+      border-color:var(--focus);
+      box-shadow:0 0 0 3px rgba(26,115,232,.20);
+    }
+    .advice-chip{
+      justify-self:end;
+      font-size:12px;
+      color:var(--muted);
+      border:1px solid var(--line-soft);
+      border-radius:999px;
+      padding:2px 8px;
+      background:#fff;
+      white-space:nowrap;
+    }
+    .status-inline{
+      font-size:12px;
+      color:#666;
+      text-align:right;
+      margin-top:-2px;
+    }
+
+    /* ===== 下段：採点マス＋上下ナビ ===== */
+    .bottom{
+      margin-top:10px;
+      display:grid;
+      grid-template-columns: minmax(0, 1fr) 88px;
+      gap:10px;
+      align-items:stretch;
+    }
+
+    .score-sheet{
+      background:#fff;
+      border:2px solid var(--line);
+      border-radius:var(--radius);
+      padding:10px;
+      display:grid;
+      grid-template-columns: minmax(0, 560px) minmax(0, 1fr);
+      column-gap:6px;
+      row-gap:10px;
+      min-width:0; /* grid内で縮めて、右ナビに食い込まない */
+    }
+    .score-sheet-left{
+      display:grid;
+      gap:8px;
+      min-width:0;
+    }
+    .rules-panel{
+      border:2px solid var(--line);
+      border-radius:var(--radius);
+      padding:6px;
+      background:#fff;
+      display:grid;
+      grid-template-rows: auto 1fr;
+      gap:5px;
+      min-width:0;
+      height:var(--rules-panel-h);
+      min-height:var(--rules-panel-h);
+      max-height:var(--rules-panel-h);
+      overflow:hidden;
+    }
+    .rules-panel-title{
+      font-size:11px;
+      font-weight:900;
+      color:#333;
+      padding-bottom:2px;
+      border-bottom:1px solid var(--line-soft);
+      line-height:1.2;
+    }
+    #rulesSummary{
+      overflow-y:auto;
+      overflow-x:hidden;
+      font-size:11px;
+      line-height:1.25;
+      color:#111;
+      min-height:0;
+    }
+    .rule-line{
+      padding:2px 0;
+      border-bottom:1px solid transparent;
+    }
+    .rule-line:last-child{
+      border-bottom:none;
+    }
+    .rule-num{
+      font-weight:700;
+      color:#666;
+    }
+    .rule-when,
+    .rule-msg{
+      word-break:break-word;
+      overflow-wrap:anywhere;
+    }
+    .rule-line--matched{
+      background-color:rgba(26,115,232,0.08);
+      border-left:3px solid #1a73e8;
+      padding-left:4px;
+      font-weight:600;
+    }
+    .rule-line--matched .rule-num::before{
+      content:'▶ ';
+      color:#1a73e8;
+    }
+
+    .score-grid{
+      display:grid;
+      grid-template-columns: repeat(var(--grid-cols), minmax(0, 1fr));
+      gap:6px;
+      align-items:start;
+      min-width:0;
+    }
+    .score-cell{
+      display:grid;
+      grid-template-rows: repeat(2, var(--cell-h));
+      gap: 6px; /* ここを変えれば段間隔も一括調整できる */
+      min-width:0;
+    }
+    .metric{
+      border:2px solid var(--line);
+      border-radius:8px;
+      padding:4px 6px;
+      font-size:12px;
+      font-weight:900;
+      display:flex; align-items:center; justify-content:center;
+      background:#fff;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      min-width:0;
+      width:100%;
+      cursor:text;
+    }
+    .metric[contenteditable="true"]:focus{
+      border-color:var(--focus);
+      box-shadow:0 0 0 3px rgba(26,115,232,.20);
+      outline:none;
+    }
+    .score-input:disabled{
+      opacity:0.5;
+      background:#f5f5f5;
+      border-color:#ccc;
+      cursor:not-allowed;
+    }
+    .score-input{
+      border:2px solid var(--line);
+      border-radius:8px;
+      padding:4px 6px;
+      font-size:14px;
+      font-weight:900;
+      text-align:center;
+      outline:none;
+      background:#fff;
+      min-width:0;
+      width:100%;
+    }
+    .score-input:focus{
+      border-color:var(--focus);
+      box-shadow:0 0 0 3px rgba(26,115,232,.20);
+    }
+
+    /* 追加行（後で関数等を仕込む用）：保存対象にしない */
+    .score-label-input{
+      border:2px solid var(--line);
+      border-radius:8px;
+      padding:4px 6px;
+      font-size:12px;
+      outline:none;
+      background:#fff;
+      min-width:0;
+      width:100%;
+    }
+    .score-label-input:focus{
+      border-color:var(--focus);
+      box-shadow:0 0 0 3px rgba(26,115,232,.20);
+    }
+    /* ===== 採点マス：高さ・余白を完全に揃える ===== */
+    .score-label-input,
+    .score-input{
+      height: var(--cell-h);
+      padding: 0 10px;       /* 上下paddingを消して高さズレ防止 */
+      line-height: 1;        /* 文字の上下ブレ防止 */
+      display: flex;
+      align-items: center;   /* 縦中央 */
+      justify-content: center; /* 横中央（特に項目名） */
+    }
+
+    /* 項目名を中央揃え（要望） */
+    .score-label-input{
+      text-align: center;
+      font-weight: 800;
+    }
+
+    /* 点数は数字なので中央のまま強め */
+    .score-input{
+      text-align: center;
+    }
+
+    /* 列ごとチェックボックス（将来の仕込み用） */
+    .skip-grid{
+      display:grid;
+      grid-template-columns: repeat(var(--grid-cols), minmax(0, 1fr));
+      gap:6px;
+      align-items:center;
+      min-width:0;
+    }
+    .skip-cell{
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      min-width:0;
+    }
+    .skip-checkbox{
+      width:16px;
+      height:16px;
+      margin:0;
+      accent-color: var(--focus);
+    }
+    .start-last-checkbox{
+      width:16px;
+      height:16px;
+      margin:0;
+      accent-color: var(--focus);
+    }
+
+    /* 右側：上下ナビ */
+    .nav{
+      display:grid;
+      grid-auto-rows:min-content;
+      gap:4px;
+      align-items:center;
+      justify-items:stretch;
+      align-content:start;
+      height:100%;
+    }
+    .nav .hint{
+      text-align:center;
+      color:var(--muted);
+      font-size:10px;
+      line-height:1.4;
+      padding:0 2px;
+    }
+    .nav button{
+      border:2px solid var(--line);
+      border-radius:8px;
+      height:28px;
+      padding:0 6px;
+      font-size:11px;
+      line-height:1.15;
+      font-weight:900;
+      background:#fff;
+      cursor:pointer;
+      width:100%;
+      white-space:nowrap;
+    }
+    .nav button:active{ transform:translateY(1px); }
+    .nav .nav-sep{
+      height:1px;
+      width:100%;
+      background:var(--line-soft);
+    }
+
+    /* Popover（ヘルプツールチップ） */
+    .help-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: #ddd;
+      color: #555;
+      font-size: 12px;
+      font-weight: bold;
+      cursor: help;
+      margin-left: 6px;
+      vertical-align: middle;
+      transition: background 0.2s;
+    }
+    .help-icon:hover, .help-icon:focus {
+      background: #ccc;
+      outline: 2px solid var(--focus);
+      outline-offset: 2px;
+    }
+    .popover-container {
+      position: relative;
+      display: inline-block;
+    }
+    .popover-content {
+      position: absolute;
+      top: 50%;
+      left: calc(100% + 8px);
+      transform: translateY(-50%);
+      z-index: 1000;
+      background: white;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      padding: 12px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+      min-width: 240px;
+      max-width: 360px;
+      font-size: 13px;
+      line-height: 1.5;
+      display: none;
+      pointer-events: auto;
+    }
+    .popover-content.show {
+      display: block;
+    }
+    /* 左側に表示するポップオーバー */
+    .popover-content.popover-left {
+      left: auto;
+      right: calc(100% + 8px);
+    }
+    .popover-content h4 {
+      margin: 0 0 8px 0;
+      font-size: 14px;
+      font-weight: bold;
+      color: #333;
+    }
+    .popover-content p {
+      margin: 6px 0;
+      color: #555;
+    }
+    .popover-content code {
+      background: #f0f0f0;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: monospace;
+      font-size: 12px;
+    }
+
+    /* レスポンシブ */
+    @media (max-width: 900px){
+      .bottom{ grid-template-columns: 1fr; }
+      .nav{ grid-template-rows:none; grid-template-columns:1fr 1fr; }
+      .nav .hint{ grid-column: 1 / -1; order:-1; }
+      .nav .nav-sep{ display:none; }
+      .advice-row{ grid-template-columns: 120px 1fr; }
+      .advice-chip{ grid-column: 1 / -1; justify-self:start; }
+      .score-sheet{ grid-template-columns: 1fr; }
+      .rules-panel{ height:var(--rules-panel-h); min-height:var(--rules-panel-h); max-height:var(--rules-panel-h); }
+    }
+
+    label{
+      font-size:12px;
+      font-weight:800;
+      color:#333;
+    }
+
+    input[type="text"], input[type="number"], select, button{
+      height: var(--ctrl-h);
+      border: var(--ctrl-b) solid var(--line);
+      border-radius: var(--ctrl-r);
+      background:#fff;
+      padding: 6px 10px;
+      font-size:13px;
+      line-height:1;
+    }
+
+    select{ padding-right: 28px; }
+
+    input[type="text"]:focus,
+    input[type="number"]:focus,
+    select:focus,
+    button:focus{
+      outline:none;
+      border-color: var(--focus);
+      box-shadow: 0 0 0 3px rgba(26,115,232,.20);
+    }
+
+    /* ボタンの見た目を統一 */
+    button{
+      font-weight:900;
+      cursor:pointer;
+    }
+    button:active{ transform: translateY(1px); }
+
+    /* 設定パネル内の区切り線や余白を統一 */
+    #settingsPanel h2{
+      font-size:15px;
+      margin:0 0 10px;
+    }
+
+    /* フィールド（ラベル＋入力）を統一 */
+    .field label{
+      display:block;
+      margin:0 0 2px;
+      font-size:12px;
+      font-weight:800;
+      color:#555;
+    }
+    .field--inline label{ display:inline; margin:0; }
+
+    /* 小さめ入力（開始行など） */
+    .ctrl--xs{ width:80px; }
+    .ctrl--sm{ min-width:140px; }
+
+    /* 設定パネルの「見出し＋1行グリッド」の統一 */
+    .settings-grid{
+      display:grid;
+      grid-template-columns: 160px 1fr auto auto auto;
+      gap:6px 12px;
+      align-items:center;
+      margin-bottom:12px;
+      padding-bottom:12px;
+      border-bottom:1px solid var(--line-soft);
+    }
+
+    .settings-row2{
+      display:grid;
+      grid-template-columns: 190px 140px 190px 1fr;
+      gap:6px 12px 6px 20px;
+      align-items:center;
+      margin-bottom:12px;
+    }
+
+    /* ===== 設定パネル：左端を完全統一 ===== */
+    /* 設定フォーム：行は必ず2カラム（左ラベル / 右コンテンツ） */
+    .settings-row{
+      display:grid;
+      grid-template-columns: 190px 1fr;
+      gap: 6px 12px;
+      align-items:center;
+      margin-bottom:12px;
+    }
+
+    /* 右側を横分割したい場合 */
+    .settings-row__cols{
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 6px;
+    }
+
+    /* 右側を2分割したい場合 */
+    .settings-row__pair{
+      display: grid;
+      grid-template-columns: 140px 1fr;
+      gap: 12px;
+    }
+
+    /* 設定行の右側を「採点値入力列」と同じ 5等分にする */
+    .settings-row__grid5{
+      display:grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 6px;
+      align-items: end;
+      min-width: 0;
+    }
+
+    .settings-field{
+      min-width:0;
+    }
+
+    .settings-field > label{
+      display:block;
+      font-size:11px;
+      color: var(--muted);
+      margin: 0 0 2px;
+      font-weight: 800;
+    }
+
+    .settings-field > input{
+      width:100%;
+    }
+
+    /* 右側：5等分グリッド（統一クラス） */
+    .settings-grid5{
+      display:grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap:6px;
+      align-items:end;
+      min-width:0;
+    }
+
+    .settings-grid5 > *{ min-width:0; }
+
+    /* 右側グリッド内の小見出し（必要な所だけ使う） */
+    .settings-mini{
+      display:block;
+      font-size:11px;
+      color:var(--muted);
+      margin:0 0 2px;
+      font-weight:800;
+    }
+
+    /* 補助行を必要時だけ表示するためのクラス */
+    .is-hidden{ display:none !important; }
+
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+    <!-- 上段：生徒文（コンパクト表示） -->
+    <section class="frame top" aria-label="生徒の提出内容">
+      <div class="student-bar">
+        <div class="student-name" id="studentName">生徒名：-</div>
+        <div class="student-meta">行: <span id="rowIndex">-</span> / ヘッダ: <span id="headerRowIndex">-</span></div>
+        <div class="student-controls" aria-label="操作">
+          <select id="sheetSelect" class="ctrl--sm" title="採点対象のシートを選択" aria-label="シート"></select>
+          <input id="startRowInput" class="ctrl--xs" type="number" min="1" value="2" placeholder="2" title="最初に採点する行番号" aria-label="開始行 (START_ROW)" />
+          <label class="field field--inline">
+            <input id="startFromLastRowCheckbox" class="start-last-checkbox" type="checkbox" aria-label="末行から開始" title="シート末行から採点" />
+          </label>
+          <button id="applyStartBtn" type="button" class="btn--xs" title="シート/開始行を適用して読み込み">適用</button>
+          <button id="openSettingsBtn" type="button" class="btn--icon" aria-label="設定を開く" title="設定">⚙</button>
+        </div>
+      </div>
+
+      <div class="answers" id="answers" aria-label="回答表示（スクロール）">
+      </div>
+    </section>
+
+    <!-- 下段：採点型紙 -->
+    <section class="bottom" aria-label="採点入力エリア">
+      <div class="score-sheet" role="group" aria-label="採点指標と得点入力">
+        <div class="score-sheet-left">
+          <div class="score-grid" id="scoreGrid">
+            <!-- 5枠：採点入力列 -->
+            <div class="score-cell">
+              <input class="score-label-input" type="text" placeholder="項目名" aria-label="項目名（スロット1）" />
+              <input class="score-input" inputmode="numeric" pattern="[0-9]*" placeholder="-" />
+            </div>
+            <div class="score-cell">
+              <input class="score-label-input" type="text" placeholder="項目名" aria-label="項目名（スロット2）" />
+              <input class="score-input" inputmode="numeric" pattern="[0-9]*" placeholder="-" />
+            </div>
+            <div class="score-cell">
+              <input class="score-label-input" type="text" placeholder="項目名" aria-label="項目名（スロット3）" />
+              <input class="score-input" inputmode="numeric" pattern="[0-9]*" placeholder="-" />
+            </div>
+            <div class="score-cell">
+              <input class="score-label-input" type="text" placeholder="項目名" aria-label="項目名（スロット4）" />
+              <input class="score-input" inputmode="numeric" pattern="[0-9]*" placeholder="-" />
+            </div>
+            <div class="score-cell">
+              <input class="score-label-input" type="text" placeholder="項目名" aria-label="項目名（スロット5）" />
+              <input class="score-input" inputmode="numeric" pattern="[0-9]*" placeholder="-" />
+            </div>
+          </div>
+
+          <div class="skip-grid" aria-label="列チェック（5列）">
+            <div class="skip-cell"><input id="colCheck0" class="skip-checkbox" type="checkbox" aria-label="総合 列チェック" title="上のscore入力をロック" data-score-index="0" /></div>
+            <div class="skip-cell"><input id="colCheck1" class="skip-checkbox" type="checkbox" aria-label="内容 列チェック" title="上のscore入力をロック" data-score-index="1" /></div>
+            <div class="skip-cell"><input id="colCheck2" class="skip-checkbox" type="checkbox" aria-label="用語 列チェック" title="上のscore入力をロック" data-score-index="2" /></div>
+            <div class="skip-cell"><input id="colCheck3" class="skip-checkbox" type="checkbox" aria-label="因果 列チェック" title="上のscore入力をロック" data-score-index="3" /></div>
+            <div class="skip-cell"><input id="colCheck4" class="skip-checkbox" type="checkbox" aria-label="根拠 列チェック" title="上のscore入力をロック" data-score-index="4" /></div>
+          </div>
+        </div>
+
+        <!-- ルール表示パネル -->
+        <div class="rules-panel" aria-label="現在のテンプレ条件">
+          <div class="rules-panel-title" id="rulesPanelTitle">現在のテンプレ条件</div>
+          <div id="rulesSummary"></div>
+        </div>
+
+        <!-- 講評（定型）を常時表示（最大3枠） -->
+        <div class="advice-bar" aria-label="講評・改善点（最大3枠）" style="grid-column: 1 / -1;">
+          <div class="advice-row" data-ruleout-row="0">
+            <div class="advice-label" id="ruleOutLabel1">講評・改善点</div>
+            <input id="ruleOutInput1" class="advice-text" type="text" placeholder="「再評価」ボタンで講評を生成します（必要なら編集）" />
+            <button id="reapplyRulesBtn" type="button" class="advice-chip" title="この枠を再評価（ルール）">🔄</button>
+          </div>
+          <div class="advice-row" data-ruleout-row="1" style="display:none;">
+            <div class="advice-label" id="ruleOutLabel2">（未使用）</div>
+            <input id="ruleOutInput2" class="advice-text" type="text" placeholder="（未使用）" />
+            <button id="reapplyRulesBtn2" type="button" class="advice-chip" title="この枠を再評価（ルール）">🔄</button>
+          </div>
+          <div class="advice-row" data-ruleout-row="2" style="display:none;">
+            <div class="advice-label" id="ruleOutLabel3">（未使用）</div>
+            <input id="ruleOutInput3" class="advice-text" type="text" placeholder="（未使用）" />
+            <button id="reapplyRulesBtn3" type="button" class="advice-chip" title="この枠を再評価（ルール）">🔄</button>
+          </div>
+        </div>
+        <div id="statusText" class="status-inline" aria-live="polite" style="grid-column: 1 / -1;">
+          状態: 初期化中...
+        </div>
+      </div>
+
+      <!-- 右側：上下ナビ -->
+      <div class="nav" aria-label="生徒切り替え">
+        <div class="hint">
+          キー操作
+          <span class="popover-container">
+            <button type="button" class="help-icon" aria-haspopup="true" aria-expanded="false" aria-controls="help-keys">?</button>
+            <div id="help-keys" class="popover-content popover-left" role="tooltip">
+              <h4>キー操作</h4>
+              <p><code>↑/↓</code>：生徒（前/次）</p>
+              <p><code>←/→</code>：スコア枠移動（右端→講評）</p>
+              <p><code>Shift+←/→</code>：採点対象シート移動</p>
+              <p><code>Enter</code>：次のスコア（右端→講評）</p>
+              <p><code>0-9</code>：スコア入力（1桁）</p>
+              <p><code>F2</code>：ラベル編集 ⇄ スコアへ戻る</p>
+              <p><code>Ctrl+Enter</code>：スコア枠/講評欄をすべて再評価</p>
+              <p><code>F8</code>：採点スプシへ</p>
+              <p><code>F9</code>：ルールへ</p>
+              <p><code>Enter</code>（講評/改善点）：下の枠へ（最後は採点へ戻る）</p>
+              <p><code>Esc</code>：ラベル編集中→スコアへ戻る</p>
+              <p><code>Ctrl+S</code>：まとめて保存</p>
+            </div>
+          </span>
+        </div>
+        <button type="button" id="btnPrev" aria-label="前の生徒（上の行）">前（上）</button>
+        <button type="button" id="btnNext" aria-label="次の生徒（下の行）">次（下）</button>
+        <div class="nav-sep" role="separator" aria-hidden="true"></div>
+        <button type="button" id="btnOpenTargetSpreadsheet" aria-label="採点対象スプレッドシートを開く" title="採点対象スプレッドシートを開く">採点スプシへ</button>
+        <button type="button" id="btnOpenRules" aria-label="ルール（設定用スプシ）を開く" title="ルール（設定用スプシ）を開く">ルールへ</button>
+        <div class="nav-sep" role="separator" aria-hidden="true"></div>
+        <button type="button" id="btnFlush" aria-label="まとめて保存（未送信の差分をGASへ一括反映）" title="未送信の差分をまとめてGASへ保存">まとめて保存</button>
+      </div>
+    </section>
+
+    <!-- 設定モーダル -->
+    <div id="settingsModal" class="modal" aria-hidden="true" style="display:none;">
+      <div class="modal-backdrop" data-close="1" aria-hidden="true"></div>
+      <section id="settingsPanel" class="frame modal-content" aria-label="設定" role="dialog" aria-modal="true" aria-describedby="settingsDesc">
+        <div class="modal-top">
+          <h2 style="margin:0; font-size:16px;">設定</h2>
+          <button id="closeSettingsBtn" type="button" class="modal-close" aria-label="設定を閉じる" title="閉じる">×</button>
+        </div>
+        <div id="settingsDesc" style="font-size:12px; color:#666; margin:6px 0 10px;">
+          採点対象・列設定・講評ルールなどを変更します。
+        </div>
+        <div class="settings-grid">
+          <label for="spreadsheetUrlInput">採点するスプシURL</label>
+          <input id="spreadsheetUrlInput" type="text" placeholder="https://docs.google.com/spreadsheets/d/..." />
+          <button id="loadSpreadsheetBtn" type="button">読み込み</button>
+          <button id="openTargetSpreadsheetBtn" type="button" title="採点対象スプシへ移動（別タブで開く）">移動</button>
+          <button id="clearSpreadsheetBtn" type="button" title="採点対象スプシをクリアして未設定状態に戻す">クリア</button>
+        </div>
+
+          <div class="settings-row">
+            <label for="headerRowInput">
+              ヘッダ行
+              <span class="popover-container">
+                <button type="button" class="help-icon" aria-haspopup="true" aria-expanded="false" aria-controls="help-headerRow">?</button>
+                <div id="help-headerRow" class="popover-content" role="tooltip">
+                  <h4>ヘッダ行</h4>
+                  <p>採点画面上段の見出し（表示列の項目名）として使う行番号です。</p>
+                  <p>例: <code>1</code></p>
+                  <p>未入力の場合は <strong>1行目</strong> を使用します。開始行（採点対象）とは独立です。</p>
+                </div>
+              </span>
+            </label>
+
+            <div class="settings-grid5">
+              <div style="grid-column:1 / span 1;">
+                <input id="headerRowInput" type="number" min="1" placeholder="1" />
+              </div>
+              <div style="grid-column:2 / span 4;"></div>
+            </div>
+          </div>
+
+          <div class="settings-row">
+            <label for="nameHeaderSelect">
+              生徒名の列
+              <span class="popover-container">
+                <button type="button" class="help-icon" aria-haspopup="true" aria-expanded="false" aria-controls="help-nameCol">?</button>
+                <div id="help-nameCol" class="popover-content" role="tooltip">
+                  <h4>生徒名の列</h4>
+                  <p>ヘッダ名をプルダウンから選択します（列移動に追従）。</p>
+                  <p>未指定の場合は表示されません。</p>
+                </div>
+              </span>
+            </label>
+
+            <div class="settings-grid5">
+              <div style="grid-column:1 / span 2;">
+                <select id="nameHeaderSelect"></select>
+              </div>
+              <div style="grid-column:3 / span 3;"></div>
+            </div>
+          </div>
+
+          <div class="settings-row">
+            <label for="displayHeader1Select">
+              採点画面表示列
+              <span class="popover-container">
+                <button type="button" class="help-icon" aria-haspopup="true" aria-expanded="false" aria-controls="help-displayCols">?</button>
+                <div id="help-displayCols" class="popover-content" role="tooltip">
+                  <h4>表示列の指定</h4>
+                  <p>採点画面に表示するヘッダ名をプルダウンから選択します（列移動に追従）。</p>
+                  <p>未使用の枠は空欄のままでOKです。</p>
+                </div>
+              </span>
+            </label>
+
+            <div class="settings-grid5">
+              <div>
+                <label for="displayHeader1Select" class="settings-mini">1</label>
+                <select id="displayHeader1Select" style="width:100%;"></select>
+              </div>
+              <div>
+                <label for="displayHeader2Select" class="settings-mini">2</label>
+                <select id="displayHeader2Select" style="width:100%;"></select>
+              </div>
+              <div>
+                <label for="displayHeader3Select" class="settings-mini">3</label>
+                <select id="displayHeader3Select" style="width:100%;"></select>
+              </div>
+              <div>
+                <label for="displayHeader4Select" class="settings-mini">4</label>
+                <select id="displayHeader4Select" style="width:100%;"></select>
+              </div>
+              <div>
+                <label for="displayHeader5Select" class="settings-mini">5</label>
+                <select id="displayHeader5Select" style="width:100%;"></select>
+              </div>
+            </div>
+          </div>
+
+          <!-- 文字数は本文ヘッダに常時表示（設定不要） -->
+            <div style="border-top:1px solid var(--line-soft); margin:12px 0;"></div>
+
+            <div class="settings-row">
+              <label>
+                採点値入力列
+                <span class="popover-container">
+                  <button type="button" class="help-icon" aria-haspopup="true" aria-expanded="false" aria-controls="help-scoreCols">?</button>
+                  <div id="help-scoreCols" class="popover-content" role="tooltip">
+                    <h4>採点列の指定</h4>
+                    <p>各枠でヘッダ名をプルダウンから選択します（列移動に追従）。未使用の枠は空欄にできます。</p>
+                    <p>同じ列は複数の採点枠に指定できません。</p>
+                  </div>
+                </span>
+              </label>
+
+              <div class="settings-grid5">
+                <div>
+                  <label for="scoreHeader1Select" class="settings-mini">1</label>
+                  <select id="scoreHeader1Select" style="width:100%;"></select>
+                </div>
+                <div>
+                  <label for="scoreHeader2Select" class="settings-mini">2</label>
+                  <select id="scoreHeader2Select" style="width:100%;"></select>
+                </div>
+                <div>
+                  <label for="scoreHeader3Select" class="settings-mini">3</label>
+                  <select id="scoreHeader3Select" style="width:100%;"></select>
+                </div>
+                <div>
+                  <label for="scoreHeader4Select" class="settings-mini">4</label>
+                  <select id="scoreHeader4Select" style="width:100%;"></select>
+                </div>
+                <div>
+                  <label for="scoreHeader5Select" class="settings-mini">5</label>
+                  <select id="scoreHeader5Select" style="width:100%;"></select>
+                </div>
+              </div>
+            </div>
+            <div id="scoreColsError" style="grid-column: 1 / -1; font-size:11px; color:#d32f2f; margin-top:-6px; margin-bottom:6px; display:none;"></div>
+
+            <div class="settings-row">
+              <label>
+                講評/改善点入力列
+                <span class="popover-container">
+                  <button type="button" class="help-icon" aria-haspopup="true" aria-expanded="false" aria-controls="help-commentCol">?</button>
+                  <div id="help-commentCol" class="popover-content" role="tooltip">
+                    <h4>講評/改善点入力列（最大3）</h4>
+                    <p><code>_rules</code> シートの <code>target</code>（サブグループ名）ごとに、書き込み先のヘッダ名を指定できます（列移動に追従）。</p>
+                    <p>未使用の枠は空欄のままでOKです（指定した枠だけ駆動します）。</p>
+                  </div>
+                </span>
+              </label>
+
+              <div class="settings-grid5" id="ruleOutputColsGrid">
+                <div>
+                  <label for="ruleOutCol1Input" class="settings-mini" id="ruleOutName1">（枠1）</label>
+                  <select id="ruleOutCol1Input" style="width:100%;"></select>
+                </div>
+                <div>
+                  <label for="ruleOutCol2Input" class="settings-mini" id="ruleOutName2">（枠2）</label>
+                  <select id="ruleOutCol2Input" style="width:100%;"></select>
+                </div>
+                <div>
+                  <label for="ruleOutCol3Input" class="settings-mini" id="ruleOutName3">（枠3）</label>
+                  <select id="ruleOutCol3Input" style="width:100%;"></select>
+                </div>
+                <div style="grid-column:4 / span 2;"></div>
+              </div>
+            </div>
+
+            <div class="settings-row" style="margin-top:6px;">
+              <label>
+                編集有効化
+                <span class="popover-container">
+                  <button type="button" class="help-icon" aria-haspopup="true" aria-expanded="false" aria-controls="help-ruleOutEnable">?</button>
+                  <div id="help-ruleOutEnable" class="popover-content" role="tooltip">
+                    <h4>編集有効化</h4>
+                    <p>チェックした枠だけ、採点画面の「講評/改善点」を表示し、編集できるようにします。</p>
+                    <p>列の指定が不足している場合は、保存時に警告を表示します（動作自体は継続します）。</p>
+                  </div>
+                </span>
+              </label>
+              <div class="settings-grid5">
+                <div style="display:flex; align-items:center; gap:6px;">
+                  <input id="ruleOutEnable1" type="checkbox" />
+                  <span class="settings-mini">1</span>
+                </div>
+                <div style="display:flex; align-items:center; gap:6px;">
+                  <input id="ruleOutEnable2" type="checkbox" />
+                  <span class="settings-mini">2</span>
+                </div>
+                <div style="display:flex; align-items:center; gap:6px;">
+                  <input id="ruleOutEnable3" type="checkbox" />
+                  <span class="settings-mini">3</span>
+                </div>
+                <div style="grid-column:4 / span 2;"></div>
+              </div>
+            </div>
+            <div id="ruleOutSaveWarn" style="grid-column: 1 / -1; font-size:11px; color:#e65100; margin-top:-4px; display:none;"></div>
+            <div style="margin-top: 12px;"></div>
+            <label for="ruleTemplateSelect">ルールテンプレ</label>
+            <div style="display:flex; gap:4px; align-items:center;">
+              <select id="ruleTemplateSelect" title="自動講評に使うルールテンプレを選択" style="padding:4px 6px; flex:1;">
+                <option value="">読み込み中...</option>
+              </select>
+              <button id="reloadTemplatesBtn" type="button" style="padding:4px 8px; display:none;" title="テンプレ一覧を再読み込み">再読み込み</button>
+            </div>
+
+            <label>ルール編集</label>
+            <div>
+              <button id="openRulesBtn" type="button">ルール（設定用スプシ）を開く</button>
+            </div>
+            
+            <div style="margin-top:12px; padding-top:12px; border-top:1px solid var(--line-soft); margin-bottom:8px;">
+              <button id="saveConfigBtn" type="button">設定を保存</button>
+              <span id="settingsStatus" style="font-size:12px; margin-left:8px; color:#666;"></span>
+            </div>
+            <div style="margin-top:12px; padding-top:12px; border-top:1px solid var(--line-soft);">
+              <div style="font-size:13px; font-weight:900; margin-bottom:8px;">画面上設定のエクスポート/インポート</div>
+              <div style="display:flex; gap:8px;">
+                <button id="exportConfigBtn" type="button">エクスポート</button>
+                <button id="importConfigBtn" type="button">インポート</button>
+                <button id="restoreConfigBtn" type="button">インポート前に復元</button>
+              </div>
+              <input id="importConfigFileInput" type="file" accept=".json,.txt,application/json,text/plain" style="display:none;" />
+              <div id="exportResult" style="margin-top:8px; font-size:12px; color:#666; display:none; white-space:pre-wrap; word-break:break-all;"></div>
+            </div>
+          </div>
+      </section>
+    </div>
+
+  </div>
+
+  <script>
+    (function () {
+      'use strict';
+
+      var state = {
+        config: null,
+        sheetNames: [],
+        currentSheet: '',
+        startRow: 2,
+        rows: [],
+        currentIndex: 0,
+        dirty: false,
+        saving: false,
+        autoComment: '', // 後方互換（slot1の表示に使用）
+        autoRuleOutputs: ['', '', ''], // 自動生成された講評（最大3枠）
+        commentReqId: 0,
+        colChecks: null,
+        currentLabelIndex: null,
+        labelSaveDebounceTimer: null,
+        ruleTemplatesById: {},
+        lastMatchedRule: { templateId: '', matchedRowNumber: null },
+        pendingEdits: {}, // 未送信の差分: { 'spreadsheetId:sheetName:rowNumber': { scores: [...], comment: '', updatedAt: ... } }
+        autoFlushTimer: null, // 自動フラッシュ用タイマー（1分間入力がない場合に自動送信）
+        applyRulesDebounceTimer: null, // ルール適用のデバウンス用タイマー
+        lastApplyRulesKey: '', // 最後に適用したルールのキー（同一内容の連打を抑止）
+        // テンプレートルールの一括ロード機能（入力時の通信をゼロにするため）
+        currentTemplateId: '', // 現在選択中のテンプレID
+        currentRules: null, // 現在選択中のテンプレのルール配列（null=未ロード、[]=ルールなし）
+        currentRulesHeaders: null, // 現在選択中のテンプレのルールヘッダー配列（キー名の解決用）
+        allHeaders: [], // ヘッダ行から取得した全ヘッダ（列移動追従用）
+        templateGeneration: 0, // 非同期の世代管理（テンプレ切替時にインクリメント、古い世代の応答を無視）
+        ruleOutputSlotsResolved: null, // 現在テンプレから解決された出力スロット（最大3）
+        uiPrefs: null,
+        colChecksFromConfigApplied: false
+      };
+
+      var els = {};
+      var UI_PREFS_KEY = 'gradingUiPrefs';
+
+      function $(id) { return document.getElementById(id); }
+
+      // 保存状態の表示（3段階: 保存済み / ローカル保存済み（未送信） / 送信中・送信失敗）
+      function setStatus(text, type) {
+        if (!els.statusText) return;
+        els.statusText.textContent = '状態: ' + text;
+        // 状態タイプに応じた色分け: ok=緑（保存済み）、local/dirty=オレンジ（未送信）、sending=青（送信中）、error=赤（エラー）、info=グレー（情報）
+        var color = '#666'; // デフォルト
+        if (type === 'error') {
+          color = '#b00020'; // 送信失敗
+        } else if (type === 'sending') {
+          color = '#1976d2'; // 送信中
+        } else if (type === 'local' || type === 'dirty') {
+          color = '#e65100'; // ローカル保存済み（未送信）
+        } else if (type === 'ok') {
+          color = '#2e7d32'; // 保存済み（すべて送信済み）
+        } else if (type === 'info') {
+          color = '#666'; // 情報表示
+        }
+        els.statusText.style.color = color;
+      }
+
+      function initElements() {
+        els.sheetSelect = $('sheetSelect');
+        els.startRowInput = $('startRowInput');
+        els.applyStartBtn = $('applyStartBtn');
+        els.startFromLastRowCheckbox = $('startFromLastRowCheckbox');
+        els.openSettingsBtn = $('openSettingsBtn');
+        els.statusText = $('statusText');
+
+        els.studentName = $('studentName');
+        els.rowIndex = $('rowIndex');
+        els.headerRowIndex = $('headerRowIndex');
+        els.answers = $('answers');
+
+        // 講評/改善点（最大3枠）
+        els.ruleOutInputs = [
+          $('ruleOutInput1'),
+          $('ruleOutInput2'),
+          $('ruleOutInput3')
+        ];
+        els.ruleOutLabels = [
+          $('ruleOutLabel1'),
+          $('ruleOutLabel2'),
+          $('ruleOutLabel3')
+        ];
+        els.ruleOutRows = Array.prototype.slice.call(document.querySelectorAll('.advice-row[data-ruleout-row]'));
+        // 後方互換: 既存コードの参照用（slot1）
+        els.commentInput = els.ruleOutInputs[0];
+        els.reapplyRulesBtn = $('reapplyRulesBtn'); // slot1（後方互換）
+        els.reapplyRulesBtn2 = $('reapplyRulesBtn2');
+        els.reapplyRulesBtn3 = $('reapplyRulesBtn3');
+
+        els.scoreInputs = Array.prototype.slice.call(document.querySelectorAll('.score-input'));
+        els.labelInputs = Array.prototype.slice.call(document.querySelectorAll('.score-label-input'));
+        els.navPrev = $('btnPrev');
+        els.navNext = $('btnNext');
+        els.navOpenTargetSpreadsheet = $('btnOpenTargetSpreadsheet');
+        els.navOpenRules = $('btnOpenRules');
+        els.navFlush = $('btnFlush');
+
+        els.settingsModal = $('settingsModal');
+        els.settingsPanel = $('settingsPanel');
+        els.closeSettingsBtn = $('closeSettingsBtn');
+        els.headerRowInput = $('headerRowInput');
+        els.nameHeaderSelect = $('nameHeaderSelect');
+        els.displayHeaderSelects = [
+          $('displayHeader1Select'),
+          $('displayHeader2Select'),
+          $('displayHeader3Select'),
+          $('displayHeader4Select'),
+          $('displayHeader5Select')
+        ];
+        // 設定: ルール出力列（最大3）
+        els.ruleOutColInputs = [
+          $('ruleOutCol1Input'),
+          $('ruleOutCol2Input'),
+          $('ruleOutCol3Input')
+        ];
+        els.ruleOutNameEls = [
+          $('ruleOutName1'),
+          $('ruleOutName2'),
+          $('ruleOutName3')
+        ];
+        els.ruleOutEnableInputs = [
+          $('ruleOutEnable1'),
+          $('ruleOutEnable2'),
+          $('ruleOutEnable3')
+        ];
+        els.ruleOutSaveWarn = $('ruleOutSaveWarn');
+        // 後方互換: 旧 commentColInput 相当は slot1 の列入力
+        els.commentColInput = els.ruleOutColInputs[0];
+        els.ruleTemplateSelect = $('ruleTemplateSelect');
+        els.reloadTemplatesBtn = $('reloadTemplatesBtn');
+        els.openRulesBtn = $('openRulesBtn');
+        els.saveConfigBtn = $('saveConfigBtn');
+        els.settingsStatus = $('settingsStatus');
+        els.scoreColsError = $('scoreColsError');
+        els.importConfigBtn = $('importConfigBtn');
+        els.exportConfigBtn = $('exportConfigBtn');
+        els.restoreConfigBtn = $('restoreConfigBtn');
+        els.importConfigFileInput = $('importConfigFileInput');
+        els.exportResult = $('exportResult');
+        els.spreadsheetUrlInput = $('spreadsheetUrlInput');
+        els.loadSpreadsheetBtn = $('loadSpreadsheetBtn');
+        els.openTargetSpreadsheetBtn = $('openTargetSpreadsheetBtn');
+        els.clearSpreadsheetBtn = $('clearSpreadsheetBtn');
+        els.colChecks = Array.prototype.slice.call(document.querySelectorAll('.skip-checkbox[data-score-index]'));
+        els.rulesSummary = $('rulesSummary');
+        els.rulesPanelTitle = $('rulesPanelTitle');
+      
+        // 採点値入力列（設定パネル）
+        els.scoreHeaderSelects = [
+          $('scoreHeader1Select'),
+          $('scoreHeader2Select'),
+          $('scoreHeader3Select'),
+          $('scoreHeader4Select'),
+          $('scoreHeader5Select')
+        ];
+
+        // UI保持（ローカルのみ）
+        state.uiPrefs = loadUiPrefs_();
+        if (els.spreadsheetUrlInput && state.uiPrefs && state.uiPrefs.spreadsheetUrl) {
+          els.spreadsheetUrlInput.value = state.uiPrefs.spreadsheetUrl;
+        }
+        if (els.startFromLastRowCheckbox && state.uiPrefs && typeof state.uiPrefs.startFromLastRow === 'boolean') {
+          els.startFromLastRowCheckbox.checked = state.uiPrefs.startFromLastRow;
+        }
+      }
+
+      function normalizeSlotLabels_(labels) {
+        var out = [];
+        if (Array.isArray(labels)) {
+          out = labels.map(function (v) { return v == null ? '' : String(v); });
+        } else if (labels != null) {
+          out = String(labels).split(',').map(function (s) { return s.trim(); });
+        }
+        if (out.length > 5) out = out.slice(0, 5);
+        while (out.length < 5) out.push('');
+        return out;
+      }
+
+      function applySlotLabelsToUI_(config) {
+        if (!els.labelInputs || !els.labelInputs.length) return;
+        var labels = normalizeSlotLabels_(config && config.slotLabels ? config.slotLabels : []);
+        for (var i = 0; i < els.labelInputs.length && i < 5; i++) {
+          els.labelInputs[i].value = labels[i] || '';
+        }
+      }
+
+      function normalizeStartRow_(value) {
+        var n = Number(value);
+        if (!isFinite(n) || n < 1) n = 1;
+        return n;
+      }
+
+      function normalizeColChecks_(arr) {
+        var out = [];
+        if (Array.isArray(arr)) {
+          for (var i = 0; i < arr.length; i++) {
+            out.push(!!arr[i]);
+          }
+        }
+        while (out.length < 5) out.push(false);
+        if (out.length > 5) out = out.slice(0, 5);
+        return out;
+      }
+
+      function applyColChecksToUI_(checks) {
+        if (!els.colChecks || !els.colChecks.length) return;
+        var normalized = normalizeColChecks_(checks);
+        state.colChecks = normalized.slice(0);
+        for (var i = 0; i < els.colChecks.length && i < 5; i++) {
+          els.colChecks[i].checked = !!normalized[i];
+          updateColumnDisabledState(i, !!normalized[i]);
+        }
+        saveUiPrefs_({ colChecks: normalized.slice(0) });
+      }
+
+      function loadUiPrefs_() {
+        var prefs = { colChecks: [], spreadsheetUrl: '', startFromLastRow: false };
+        try {
+          var raw = localStorage.getItem(UI_PREFS_KEY);
+          if (!raw) return prefs;
+          var data = JSON.parse(raw);
+          if (!data || typeof data !== 'object') return prefs;
+          if (Array.isArray(data.colChecks)) prefs.colChecks = data.colChecks;
+          if (typeof data.spreadsheetUrl === 'string') prefs.spreadsheetUrl = data.spreadsheetUrl;
+          if (typeof data.startFromLastRow === 'boolean') prefs.startFromLastRow = data.startFromLastRow;
+        } catch (e) {
+          // noop
+        }
+        return prefs;
+      }
+
+      function saveUiPrefs_(patch) {
+        if (!state.uiPrefs || typeof state.uiPrefs !== 'object') {
+          state.uiPrefs = { colChecks: [], spreadsheetUrl: '', startFromLastRow: false };
+        }
+        if (patch && typeof patch === 'object') {
+          for (var k in patch) {
+            if (patch.hasOwnProperty(k)) {
+              state.uiPrefs[k] = patch[k];
+            }
+          }
+        }
+        try {
+          localStorage.setItem(UI_PREFS_KEY, JSON.stringify(state.uiPrefs));
+        } catch (e) {
+          // noop
+        }
+      }
+
+      function scheduleSaveSlotLabels_(delayMs) {
+        if (!state || !state.config) return;
+        if (state.labelSaveDebounceTimer) {
+          clearTimeout(state.labelSaveDebounceTimer);
+          state.labelSaveDebounceTimer = null;
+        }
+        var wait = (delayMs === 0) ? 0 : (typeof delayMs === 'number' ? delayMs : 10000);
+        state.labelSaveDebounceTimer = setTimeout(function () {
+          state.labelSaveDebounceTimer = null;
+          var labels = normalizeSlotLabels_(state.config.slotLabels || []);
+          google.script.run
+            .withSuccessHandler(function (saved) {
+              // サーバの正規化結果を反映（ただし入力体験は壊さない）
+              if (saved) {
+                state.config = saved;
+                // ラベル入力中にUI全体を上書きするとカーソルが飛びやすいので抑止
+                if (!isLabelInput(document.activeElement)) {
+                  applySlotLabelsToUI_(saved);
+                }
+              }
+            })
+            .withFailureHandler(function (err) {
+              // 行保存とは別系統なので、失敗時だけ通知する（状態表示を上書きしすぎない）
+              setStatus('ラベル保存エラー: ' + (err && err.message ? err.message : err), 'error');
+            })
+            .apiSetSlotLabels(labels);
+        }, wait);
+      }
+
+      function openSettingsModal_() {
+        if (!els.settingsModal) return;
+        els.settingsModal.style.display = 'flex';
+        els.settingsModal.setAttribute('aria-hidden', 'false');
+        if (els.openSettingsBtn) els.openSettingsBtn.setAttribute('aria-expanded', 'true');
+        // 背景スクロール抑止
+        document.body.style.overflow = 'hidden';
+        window.setTimeout(function () {
+          if (els.settingsPanel) els.settingsPanel.scrollTop = 0;
+          if (els.nameHeaderSelect) {
+            els.nameHeaderSelect.focus();
+          }
+        }, 0);
+      }
+
+      function closeSettingsModal_() {
+        if (!els.settingsModal) return;
+        els.settingsModal.style.display = 'none';
+        els.settingsModal.setAttribute('aria-hidden', 'true');
+        if (els.openSettingsBtn) els.openSettingsBtn.setAttribute('aria-expanded', 'false');
+        document.body.style.overflow = '';
+      }
+
+      function bindEvents() {
+        els.applyStartBtn.addEventListener('click', function () {
+          persistStartRow_();
+          loadInitData();
+        });
+        if (els.startFromLastRowCheckbox) {
+          els.startFromLastRowCheckbox.addEventListener('change', function () {
+            saveUiPrefs_({ startFromLastRow: !!els.startFromLastRowCheckbox.checked });
+            persistStartFromLastRow_();
+            loadInitData();
+          });
+        }
+        els.openSettingsBtn.addEventListener('click', function () {
+          // ⚙ボタンでモーダルを開閉
+          if (els.settingsModal && els.settingsModal.style.display !== 'none') {
+            closeSettingsModal_();
+          } else {
+            openSettingsModal_();
+          }
+        });
+        if (els.closeSettingsBtn) {
+          els.closeSettingsBtn.addEventListener('click', function () {
+            closeSettingsModal_();
+          });
+        }
+        if (els.settingsModal) {
+          els.settingsModal.addEventListener('click', function (e) {
+            var t = e.target;
+            if (t && t.getAttribute && t.getAttribute('data-close') === '1') {
+              closeSettingsModal_();
+            }
+          });
+        }
+        document.addEventListener('keydown', function (e) {
+          if (e.key === 'Escape') {
+            if (els.settingsModal && els.settingsModal.style.display !== 'none') {
+              e.preventDefault();
+              e.stopPropagation();
+              closeSettingsModal_();
+            }
+          }
+        });
+        els.sheetSelect.addEventListener('change', function () {
+          state.currentSheet = els.sheetSelect.value;
+          loadInitData();
+        });
+        // ルール出力枠（編集有効化）の変更は即座に採点画面へ反映
+        (els.ruleOutEnableInputs || []).forEach(function (cb, idx) {
+          if (!cb) return;
+          cb.addEventListener('change', function () {
+            var slots = state.ruleOutputSlotsResolved || resolveRuleOutputSlots_(state.config || {}, state.currentRules || [], state.currentRulesHeaders || []);
+            if (slots[idx]) {
+              slots[idx].enabled = !!cb.checked;
+            }
+            applyRuleOutputSlotsToUI_(slots);
+          });
+        });
+
+        els.navPrev.addEventListener('click', function () {
+          moveRow(-1);
+        });
+        els.navNext.addEventListener('click', function () {
+          moveRow(1);
+        });
+        if (els.navOpenTargetSpreadsheet) {
+          els.navOpenTargetSpreadsheet.addEventListener('click', function () {
+            openTargetSpreadsheet_(null);
+          });
+        }
+        if (els.navOpenRules) {
+          els.navOpenRules.addEventListener('click', function () {
+            openRulesSpreadsheet_(null);
+          });
+        }
+        els.navFlush.addEventListener('click', function () {
+          flushPendingEdits();
+        });
+        els.scoreInputs.forEach(function (input, idx) {
+          input.addEventListener('input', function () {
+            markDirty();
+            // スコア変更時にルール評価を実行（ローカル評価、通信なし）
+            handleScoresChanged();
+          });
+          input.addEventListener('focus', function () {
+            state.currentScoreIndex = idx;
+          });
+        });
+        if (els.labelInputs && els.labelInputs.length) {
+          els.labelInputs.forEach(function (input, idx) {
+            input.addEventListener('focus', function () {
+              state.currentLabelIndex = idx;
+            });
+            input.addEventListener('input', function () {
+              state.config = state.config || {};
+              var labels = normalizeSlotLabels_(state.config.slotLabels || []);
+              labels[idx] = input.value == null ? '' : String(input.value);
+              state.config.slotLabels = labels;
+              scheduleSaveSlotLabels_(10000);
+            });
+            input.addEventListener('blur', function () {
+              // 入力が止まった時点で確実に保存したいので、blurでもスケジュール
+              state.config = state.config || {};
+              var labels = normalizeSlotLabels_(state.config.slotLabels || []);
+              labels[idx] = input.value == null ? '' : String(input.value);
+              state.config.slotLabels = labels;
+              scheduleSaveSlotLabels_(0);
+            });
+          });
+        }
+        // 講評/改善点（最大3枠）：入力はローカル差分として保持
+        (els.ruleOutInputs || []).forEach(function (input) {
+          if (!input) return;
+          input.addEventListener('input', function () {
+            markDirty();
+          });
+        });
+
+        // 再評価（枠ごと）
+        if (els.reapplyRulesBtn) {
+          els.reapplyRulesBtn.addEventListener('click', function () { reapplyRuleOutputSlot_(0); });
+        }
+        if (els.reapplyRulesBtn2) {
+          els.reapplyRulesBtn2.addEventListener('click', function () { reapplyRuleOutputSlot_(1); });
+        }
+        if (els.reapplyRulesBtn3) {
+          els.reapplyRulesBtn3.addEventListener('click', function () { reapplyRuleOutputSlot_(2); });
+        }
+        if (els.ruleTemplateSelect) {
+          els.ruleTemplateSelect.addEventListener('change', function () {
+            if (!state.config) state.config = {};
+            var newTemplateId = String(els.ruleTemplateSelect.value || '').trim();
+            state.config.ruleTemplateId = newTemplateId || '';
+            
+            // テンプレ切替時にルールを一括ロード（旧ルールを破棄してから新ルールを読み込む）
+            clearCurrentTemplate();
+            if (newTemplateId) {
+              loadCurrentTemplateRules(newTemplateId);
+            }
+            // 空文字の場合はテンプレート未選択状態（既に clearCurrentTemplate() でクリア済み）
+            
+            // タイトルを更新
+            updateRulesPanelTitle_();
+            // ルール表示を更新（テンプレ切替時は必ず再取得）
+            renderRulesSummary(newTemplateId);
+          });
+        }
+        if (els.reloadTemplatesBtn) {
+          els.reloadTemplatesBtn.addEventListener('click', function () {
+            var currentTemplateId = state.config && state.config.ruleTemplateId ? state.config.ruleTemplateId : '';
+            loadRuleTemplates_(currentTemplateId);
+          });
+        }
+        if (els.openRulesBtn) {
+          els.openRulesBtn.addEventListener('click', function () {
+            openRulesSpreadsheet_(els.settingsStatus);
+          });
+        }
+        els.saveConfigBtn.addEventListener('click', saveConfig);
+        (els.scoreHeaderSelects || []).forEach(function (sel) {
+          if (!sel) return;
+          sel.addEventListener('change', validateScoreColsBeforeSave_);
+        });
+        els.loadSpreadsheetBtn.addEventListener('click', loadSpreadsheet);
+        if (els.spreadsheetUrlInput) {
+          els.spreadsheetUrlInput.addEventListener('input', function () {
+            saveUiPrefs_({ spreadsheetUrl: String(els.spreadsheetUrlInput.value || '') });
+          });
+        }
+        if (els.openTargetSpreadsheetBtn) {
+          els.openTargetSpreadsheetBtn.addEventListener('click', function () {
+            openTargetSpreadsheet_(els.settingsStatus);
+          });
+        }
+        els.clearSpreadsheetBtn.addEventListener('click', clearTargetSpreadsheet);
+        if (els.importConfigBtn) {
+          els.importConfigBtn.addEventListener('click', function () {
+            if (!els.importConfigFileInput) return;
+            els.importConfigFileInput.value = '';
+            els.importConfigFileInput.click();
+          });
+        }
+        if (els.importConfigFileInput) {
+          els.importConfigFileInput.addEventListener('change', handleImportConfigFile_);
+        }
+        if (els.exportConfigBtn) {
+          els.exportConfigBtn.addEventListener('click', function () {
+            exportConfig();
+          });
+        }
+        if (els.restoreConfigBtn) {
+          els.restoreConfigBtn.addEventListener('click', function () {
+            restoreLatestConfigBackup();
+          });
+        }
+        
+        // 再評価ボタン: 明示的にルールを再評価して講評を更新
+        // → handleScoresChanged() → ローカル評価
+        els.reapplyRulesBtn.addEventListener('click', function () {
+          handleScoresChanged();
+        });
+
+        // Popoverの初期化
+        initPopovers();
+        
+        // 列チェックの監視
+        initColumnChecks();
+
+        document.addEventListener('keydown', handleKeydown);
+      }
+
+      function initPopovers() {
+        var helpIcons = document.querySelectorAll('.help-icon');
+        var currentOpen = null;
+        
+        helpIcons.forEach(function (icon) {
+          var container = icon.parentElement;
+          var popover = container.querySelector('.popover-content');
+          if (!popover) return;
+          
+          var popoverId = icon.getAttribute('aria-controls');
+          var isFixed = false; // クリック/タップで固定されたか
+          
+          // ホバーで表示（PCのみ、固定されていない場合）
+          icon.addEventListener('mouseenter', function () {
+            if (!isFixed) {
+              showPopover(icon, popover);
+            }
+          });
+          
+          container.addEventListener('mouseleave', function () {
+            if (!isFixed) {
+              hidePopover(icon, popover);
+            }
+          });
+          
+          // フォーカスで表示（キーボードナビゲーション）
+          icon.addEventListener('focus', function () {
+            if (!isFixed) {
+              showPopover(icon, popover);
+            }
+          });
+          
+          icon.addEventListener('blur', function () {
+            // blur時は少し遅延して、フォーカスがpopover内に移動していないか確認
+            window.setTimeout(function () {
+              if (!isFixed && !container.contains(document.activeElement)) {
+                hidePopover(icon, popover);
+              }
+            }, 100);
+          });
+          
+          // クリック/タップで固定/解除
+          icon.addEventListener('click', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            
+            if (isFixed) {
+              // 既に固定されている場合は解除
+              isFixed = false;
+              hidePopover(icon, popover);
+              currentOpen = null;
+            } else {
+              // 他のpopoverを閉じる
+              if (currentOpen && currentOpen !== icon) {
+                var otherContainer = currentOpen.parentElement;
+                var otherPopover = otherContainer.querySelector('.popover-content');
+                hidePopover(currentOpen, otherPopover);
+                currentOpen._isFixed = false;
+              }
+              // 固定して表示
+              isFixed = true;
+              icon._isFixed = true;
+              showPopover(icon, popover);
+              currentOpen = icon;
+            }
+          });
+          
+          // アイコンに固定状態を保持
+          icon._isFixed = false;
+          Object.defineProperty(icon, '_isFixed', {
+            get: function () { return isFixed; },
+            set: function (val) { isFixed = val; }
+          });
+        });
+        
+        // 外側クリックで閉じる
+        document.addEventListener('click', function (e) {
+          if (currentOpen) {
+            var container = currentOpen.parentElement;
+            if (!container.contains(e.target)) {
+              var popover = container.querySelector('.popover-content');
+              hidePopover(currentOpen, popover);
+              currentOpen._isFixed = false;
+              currentOpen = null;
+            }
+          }
+        });
+        
+        // Escで閉じる
+        document.addEventListener('keydown', function (e) {
+          if (e.key === 'Escape' && currentOpen) {
+            var container = currentOpen.parentElement;
+            var popover = container.querySelector('.popover-content');
+            hidePopover(currentOpen, popover);
+            currentOpen._isFixed = false;
+            currentOpen = null;
+          }
+        });
+        
+        function showPopover(icon, popover) {
+          popover.classList.add('show');
+          icon.setAttribute('aria-expanded', 'true');
+        }
+        
+        function hidePopover(icon, popover) {
+          popover.classList.remove('show');
+          icon.setAttribute('aria-expanded', 'false');
+        }
+      }
+
+
+      function initColumnChecks() {
+        state.colChecks = state.colChecks || [];
+        if (state.uiPrefs && Array.isArray(state.uiPrefs.colChecks)) {
+          applyColChecksToUI_(state.uiPrefs.colChecks);
+        }
+        els.colChecks.forEach(function (checkbox, idx) {
+          function apply_() {
+            state.colChecks[idx] = !!checkbox.checked;
+            updateColumnDisabledState(idx, checkbox.checked);
+            saveUiPrefs_({ colChecks: state.colChecks.slice(0) });
+            persistColChecks_();
+          }
+          checkbox.addEventListener('change', apply_);
+          // 初期状態を反映
+          apply_();
+        });
+      }
+
+      function updateColumnDisabledState(index, checked) {
+        if (index < 0 || index >= els.scoreInputs.length) return;
+        var input = els.scoreInputs[index];
+        input.disabled = checked;
+      }
+
+      function persistStartRow_() {
+        if (!state.config) return;
+        var next = normalizeStartRow_(els.startRowInput ? els.startRowInput.value : state.config.startRow);
+        var prev = normalizeStartRow_(state.config.startRow);
+        if (next === prev) return;
+        var cfg = {};
+        for (var k in state.config) {
+          if (state.config.hasOwnProperty(k)) cfg[k] = state.config[k];
+        }
+        cfg.startRow = next;
+        google.script.run
+          .withSuccessHandler(function (saved) {
+            if (saved) state.config = saved;
+            loadInitData();
+          })
+          .withFailureHandler(function (err) {
+            console.warn('startRow 保存エラー:', err);
+          })
+          .apiSetConfig(cfg);
+      }
+
+      function persistColChecks_() {
+        if (!state.config) return;
+        var next = normalizeColChecks_(state.colChecks || []);
+        var prev = normalizeColChecks_(state.config.colChecks || []);
+        var same = true;
+        for (var i = 0; i < next.length; i++) {
+          if (next[i] !== prev[i]) { same = false; break; }
+        }
+        if (same) return;
+        var cfg = {};
+        for (var k in state.config) {
+          if (state.config.hasOwnProperty(k)) cfg[k] = state.config[k];
+        }
+        cfg.colChecks = next;
+        google.script.run
+          .withSuccessHandler(function (saved) {
+            if (saved) state.config = saved;
+          })
+          .withFailureHandler(function (err) {
+            console.warn('colChecks 保存エラー:', err);
+          })
+          .apiSetConfig(cfg);
+      }
+
+      function persistStartFromLastRow_() {
+        if (!state.config) return;
+        var next = !!(els.startFromLastRowCheckbox && els.startFromLastRowCheckbox.checked);
+        var prev = !!state.config.startFromLastRow;
+        if (next === prev) return;
+        var cfg = {};
+        for (var k in state.config) {
+          if (state.config.hasOwnProperty(k)) cfg[k] = state.config[k];
+        }
+        cfg.startFromLastRow = next;
+        google.script.run
+          .withSuccessHandler(function (saved) {
+            if (saved) state.config = saved;
+          })
+          .withFailureHandler(function (err) {
+            console.warn('startFromLastRow 保存エラー:', err);
+          })
+          .apiSetConfig(cfg);
+      }
+
+      function loadSpreadsheet() {
+        var url = els.spreadsheetUrlInput.value.trim();
+        if (!url) {
+          setStatus('URLを入力してください', 'error');
+          return;
+        }
+        setStatus('読み込み中...', 'info');
+        google.script.run
+          .withSuccessHandler(function (res) {
+            if (res && res.ok) {
+              setStatus('読み込み完了', 'ok');
+              saveUiPrefs_({ spreadsheetUrl: url });
+              if (els.navOpenTargetSpreadsheet) els.navOpenTargetSpreadsheet.disabled = false;
+              // シート一覧を再取得
+              google.script.run
+                .withSuccessHandler(function (names) {
+                  state.sheetNames = names || [];
+                  els.sheetSelect.innerHTML = '';
+                  state.sheetNames.forEach(function (name, idx) {
+                    var opt = document.createElement('option');
+                    opt.value = name;
+                    opt.textContent = name;
+                    els.sheetSelect.appendChild(opt);
+                    if (idx === 0) state.currentSheet = name;
+                  });
+                  if (state.sheetNames.length > 0) {
+                    els.sheetSelect.value = state.currentSheet || state.sheetNames[0];
+                    state.currentSheet = els.sheetSelect.value;
+                  }
+                  // データを再読み込み
+                  loadInitData();
+                })
+                .withFailureHandler(function (err) {
+                  setStatus('シート一覧取得エラー: ' + (err && err.message ? err.message : err), 'error');
+                })
+                .apiGetSheets();
+            } else {
+              setStatus('読み込みに失敗しました', 'error');
+            }
+          })
+          .withFailureHandler(function (err) {
+            setStatus('読み込みエラー: ' + (err && err.message ? err.message : err), 'error');
+          })
+          .apiSetSpreadsheetUrl(url);
+      }
+
+      function clearTargetSpreadsheet() {
+        if (!confirm('採点対象スプレッドシートをクリアして未設定状態に戻します。よろしいですか？')) {
+          return;
+        }
+        setStatus('クリア中...', 'info');
+        google.script.run
+          .withSuccessHandler(function (res) {
+            if (res && res.ok) {
+              // 未設定状態の定義に従ってリセット
+              // 1. sheetSelectは未選択（空）
+              state.sheetNames = [];
+              state.currentSheet = '';
+              els.sheetSelect.innerHTML = '';
+              
+              // 2. 行データ表示（生徒/回答/得点/講評）は空
+              state.rows = [];
+              state.currentIndex = 0;
+              els.studentName.textContent = '生徒名：-';
+              els.rowIndex.textContent = '-';
+              els.answers.innerHTML = '';
+              els.scoreInputs.forEach(function (el) { el.value = ''; });
+              (els.ruleOutInputs || []).forEach(function (el) { if (el) el.value = ''; });
+              state.autoRuleOutputs = ['', '', ''];
+              state.autoComment = '';
+              
+              // 3. 採点操作はdisabled（前後移動ボタン）
+              els.navPrev.disabled = true;
+              els.navNext.disabled = true;
+              if (els.navOpenTargetSpreadsheet) els.navOpenTargetSpreadsheet.disabled = true;
+              els.applyStartBtn.disabled = true;
+
+              // 5. URL入力欄もクリア
+              if (els.spreadsheetUrlInput) els.spreadsheetUrlInput.value = '';
+              saveUiPrefs_({ spreadsheetUrl: '' });
+              
+              // 4. ただしルールテンプレ/ルールサマリは表示維持（設定用スプシ参照のため）
+              // （これらは既に表示されているはず）
+              
+              setStatus('クリアしました（未設定状態）', 'ok');
+            } else {
+              setStatus('クリアに失敗しました', 'error');
+            }
+          })
+          .withFailureHandler(function (err) {
+            setStatus('クリアエラー: ' + (err && err.message ? err.message : err), 'error');
+          })
+          .apiClearTargetSpreadsheet();
+      }
+
+      function openRulesSpreadsheet_(statusEl) {
+        // ポップアップブロック対策: ユーザー操作の瞬間に空タブを確保
+        var w = window.open('', '_blank');
+        if (statusEl) {
+          statusEl.textContent = 'URL取得中...';
+          statusEl.style.color = '';
+        } else {
+          setStatus('URL取得中...', 'info');
+        }
+        google.script.run
+          .withSuccessHandler(function (url) {
+            if (statusEl) statusEl.textContent = '';
+            if (!url) {
+              if (w && !w.closed) w.close();
+              if (statusEl) {
+                statusEl.textContent = 'URL取得に失敗しました';
+                statusEl.style.color = '#b00020';
+              } else {
+                setStatus('URL取得に失敗しました', 'error');
+              }
+              return;
+            }
+            if (w && !w.closed) {
+              w.location.href = url;
+            } else {
+              window.open(url, '_blank');
+            }
+          })
+          .withFailureHandler(function (err) {
+            if (w && !w.closed) w.close();
+            var msg = 'URL取得エラー: ' + (err && err.message ? err.message : err);
+            if (statusEl) {
+              statusEl.textContent = msg;
+              statusEl.style.color = '#b00020';
+            } else {
+              setStatus(msg, 'error');
+            }
+          })
+          .apiGetRulesEditUrl();
+      }
+
+      function openTargetSpreadsheet_(statusEl) {
+        // 設定モーダルからの「移動」は、入力欄にURLがあればそれを優先（ロード前でも使える）
+        if (statusEl && els.spreadsheetUrlInput) {
+          var direct = String(els.spreadsheetUrlInput.value || '').trim();
+          if (direct) {
+            // URLでない場合（ID貼り付け）も想定して補完
+            if (!/^https?:\/\//i.test(direct)) {
+              direct = 'https://docs.google.com/spreadsheets/d/' + direct + '/edit';
+            }
+            window.open(direct, '_blank');
+            return;
+          }
+        }
+
+        // ポップアップブロック対策: ユーザー操作の瞬間に空タブを確保
+        var w = window.open('', '_blank');
+        if (statusEl) {
+          statusEl.textContent = 'URL取得中...';
+          statusEl.style.color = '';
+        } else {
+          setStatus('URL取得中...', 'info');
+        }
+
+        var params = { sheetName: state.currentSheet || (state.config && state.config.sheetName) || '' };
+        google.script.run
+          .withSuccessHandler(function (url) {
+            if (statusEl) statusEl.textContent = '';
+            if (!url) {
+              if (w && !w.closed) w.close();
+              if (statusEl) {
+                statusEl.textContent = 'URL取得に失敗しました';
+                statusEl.style.color = '#b00020';
+              } else {
+                setStatus('URL取得に失敗しました', 'error');
+              }
+              return;
+            }
+            // 入力欄が空なら補完（再利用しやすくする）
+            if (els.spreadsheetUrlInput && !String(els.spreadsheetUrlInput.value || '').trim()) {
+              els.spreadsheetUrlInput.value = url;
+              saveUiPrefs_({ spreadsheetUrl: url });
+            }
+            if (w && !w.closed) {
+              w.location.href = url;
+            } else {
+              window.open(url, '_blank');
+            }
+          })
+          .withFailureHandler(function (err) {
+            if (w && !w.closed) w.close();
+            var msg = 'URL取得エラー: ' + (err && err.message ? err.message : err);
+            if (statusEl) {
+              statusEl.textContent = msg;
+              statusEl.style.color = '#b00020';
+            } else {
+              setStatus(msg, 'error');
+            }
+          })
+          .apiGetTargetSpreadsheetEditUrl(params);
+      }
+
+      function hydrateSpreadsheetUrlFromServer_() {
+        if (!els.spreadsheetUrlInput) return;
+        if (String(els.spreadsheetUrlInput.value || '').trim()) return;
+        var params = { sheetName: state.currentSheet || (state.config && state.config.sheetName) || '' };
+        google.script.run
+          .withSuccessHandler(function (url) {
+            if (!url) return;
+            if (!String(els.spreadsheetUrlInput.value || '').trim()) {
+              els.spreadsheetUrlInput.value = url;
+              saveUiPrefs_({ spreadsheetUrl: url });
+            }
+          })
+          .withFailureHandler(function () {
+            // 未設定時などは無視
+          })
+          .apiGetTargetSpreadsheetEditUrl(params);
+      }
+
+      function isScoreInput(el) {
+        return !!(el && el.classList && el.classList.contains('score-input'));
+      }
+
+      function isLabelInput(el) {
+        return !!(el && el.classList && el.classList.contains('score-label-input'));
+      }
+
+      function focusComment() {
+        focusRuleOutInput_(findFirstVisibleRuleOutIndex_());
+      }
+
+      function isRuleOutInput_(el) {
+        if (!el || !els.ruleOutInputs) return false;
+        for (var i = 0; i < els.ruleOutInputs.length; i++) {
+          if (els.ruleOutInputs[i] === el) return true;
+        }
+        return false;
+      }
+
+      function findFirstVisibleRuleOutIndex_() {
+        var slots = state.ruleOutputSlotsResolved;
+        // slot定義がない場合は先頭だけ
+        if (!slots || !Array.isArray(slots)) return 0;
+        for (var i = 0; i < slots.length; i++) {
+          if (!slots[i]) continue;
+          if (slots[i].enabled) return i;
+        }
+        return 0;
+      }
+
+      function findNextVisibleRuleOutIndex_(currentIdx) {
+        var slots = state.ruleOutputSlotsResolved;
+        if (!slots || !Array.isArray(slots)) return null;
+        for (var i = (currentIdx + 1); i < slots.length; i++) {
+          if (!slots[i]) continue;
+          if (slots[i].enabled) return i;
+        }
+        return null;
+      }
+
+      function focusRuleOutInput_(index) {
+        if (!els.ruleOutInputs || !els.ruleOutInputs.length) return;
+        var idx = Number(index);
+        if (!isFinite(idx) || idx < 0) idx = 0;
+        if (idx >= els.ruleOutInputs.length) idx = els.ruleOutInputs.length - 1;
+        var el = els.ruleOutInputs[idx];
+        if (!el) return;
+        // 非表示なら何もしない（フォールバックでslot1へ）
+        var rowEl = els.ruleOutRows && els.ruleOutRows[idx] ? els.ruleOutRows[idx] : null;
+        if (rowEl && rowEl.style && rowEl.style.display === 'none') {
+          if (idx !== 0) return focusRuleOutInput_(0);
+        }
+        el.focus();
+        if (el.select) el.select();
+      }
+
+      // 有効（disabledでない）な最後のスコア枠 index を返す
+      function findLastUncheckedScoreIndex() {
+        for (var i = els.scoreInputs.length - 1; i >= 0; i--) {
+          if (!els.scoreInputs[i].disabled) return i;
+        }
+        return -1;
+      }
+
+      function handleKeydown(e) {
+        var key = e.key;
+        var active = document.activeElement;
+
+        // ★まとめて保存: Ctrl+S（ブラウザの保存を潰す）
+        if ((e.ctrlKey || e.metaKey) && (key === 's' || key === 'S')) {
+          e.preventDefault();
+          flushPendingEdits(false);
+          return;
+        }
+
+        // ★採点スプシへ: F8
+        if (key === 'F8') {
+          e.preventDefault();
+          openTargetSpreadsheet_(null);
+          return;
+        }
+
+        // ★ルールへ: F9
+        if (key === 'F9') {
+          e.preventDefault();
+          openRulesSpreadsheet_(null);
+          return;
+        }
+
+        // ↑/↓：どこにフォーカスがあっても生徒移動（講評/ラベルでも）
+        if (key === 'ArrowUp' || key === 'ArrowDown') {
+          e.preventDefault();
+          moveRow(key === 'ArrowUp' ? -1 : 1);
+          return;
+        }
+
+        // ★シート移動: Shift + ←/→（採点対象スプシのシート切替）
+        // - 文字選択（Shift+矢印）と衝突しやすいので、スコア枠フォーカス時のみ有効化する
+        if (e.shiftKey && (key === 'ArrowLeft' || key === 'ArrowRight') && isScoreInput(active)) {
+          e.preventDefault();
+          moveSheet_(key === 'ArrowLeft' ? -1 : 1);
+          return;
+        }
+
+        // 講評/改善点欄：Ctrl+Enter で再評価、Enterで下の枠へ（最後はスコアへ）
+        if (isRuleOutInput_(active)) {
+          if (key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+            e.preventDefault();
+            handleScoresChanged();
+            return;
+          }
+          if (key === 'Enter' && !e.ctrlKey && !e.metaKey) {
+            e.preventDefault();
+            var curIdx = 0;
+            for (var i = 0; i < (els.ruleOutInputs || []).length; i++) {
+              if (els.ruleOutInputs[i] === active) { curIdx = i; break; }
+            }
+            var nextIdx = findNextVisibleRuleOutIndex_(curIdx);
+            if (nextIdx != null) {
+              focusRuleOutInput_(nextIdx);
+            } else {
+              focusScoreInput(findFirstUncheckedScoreIndex() ?? 0);
+            }
+            return;
+          }
+          // それ以外は通常編集（左右などはブラウザ既定でOK）
+          return;
+        }
+
+        // F2：スコア ⇄ ラベルのトグル
+        if (key === 'F2') {
+          e.preventDefault();
+
+          if (isScoreInput(active)) {
+            var idx = state.currentScoreIndex || 0;
+            var labelInputs = document.querySelectorAll('.score-label-input');
+            if (labelInputs[idx]) {
+              labelInputs[idx].focus();
+              if (labelInputs[idx].select) labelInputs[idx].select();
+            }
+            return;
+          }
+          if (isLabelInput(active)) {
+            focusScoreInput(state.currentScoreIndex || 0);
+            return;
+          }
+          return;
+        }
+
+        // Esc：講評へ行った後は戻る（スコアに戻す）
+        if (key === 'Escape') {
+          // ラベル編集中ならスコアへ
+          if (isLabelInput(active)) {
+            e.preventDefault();
+            focusScoreInput(state.currentScoreIndex || 0);
+            return;
+          }
+        }
+
+        // ここからは「スコア枠でのみ」効かせる操作
+        if (!isScoreInput(active)) {
+          return;
+        }
+
+        // ←/→：スコア枠移動（右端を越えたら講評へ）
+        if (key === 'ArrowLeft' || key === 'ArrowRight') {
+          e.preventDefault();
+
+          if (key === 'ArrowLeft') {
+            moveScore(-1);
+            return;
+          }
+
+          // ArrowRight
+          var lastIdx = findLastUncheckedScoreIndex();
+          var curIdx = state.currentScoreIndex || 0;
+          if (lastIdx >= 0 && curIdx >= lastIdx) {
+            focusComment();
+            return;
+          }
+          moveScore(1);
+          return;
+        }
+
+        // Enter：スコア枠移動（右端を越えたら講評へ）
+        if (key === 'Enter') {
+          // スコア枠：Ctrl+Enter で再評価（ローカル評価、通信なし）
+          if (e.ctrlKey || e.metaKey) {
+            e.preventDefault();
+            handleScoresChanged();
+            return;
+          }
+          // 通常のEnter：次のスコア枠へ移動
+          e.preventDefault();
+          var lastIdx2 = findLastUncheckedScoreIndex();
+          var curIdx2 = state.currentScoreIndex || 0;
+          if (lastIdx2 >= 0 && curIdx2 >= lastIdx2) {
+            focusComment();
+            return;
+          }
+          moveScore(1);
+          return;
+        }
+
+        // 数字：即入力（1桁運用、入力時にルール評価を実行）
+        if (key >= '0' && key <= '9') {
+          e.preventDefault();
+          active.value = key;
+          markDirty();
+          handleScoresChanged();
+          return;
+        }
+
+        // それ以外の1文字入力（c等）はスコア枠では禁止（誤爆防止）
+        if (key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+          e.preventDefault();
+          return;
+        }
+      }
+
+      // 未送信差分ありをマーク（localStorageには保存済みだがGAS未送信）
+      // 入力があったら自動フラッシュタイマーをリセット（1分カウントを再開）
+      function markDirty() {
+        if (!state.dirty) {
+          state.dirty = true;
+          setStatus('ローカル保存済み（未送信）', 'local');
+        }
+        resetAutoFlushTimer();
+      }
+
+      // 未送信差分なしにクリア（すべて送信済み状態）
+      // 注意: GAS送信完了時に呼ばれる関数
+      function clearDirty() {
+        state.dirty = false;
+        setStatus('保存済み', 'ok');
+        clearAutoFlushTimer(); // 保存済みの場合はタイマーをクリア（差分がないため）
+      }
+
+      // GAS送信中状態を表示
+      function setSendingStatus() {
+        setStatus('送信中...', 'sending');
+      }
+
+      function focusScoreInput(index) {
+        if (!els.scoreInputs.length) return;
+        if (index < 0) index = 0;
+        if (index >= els.scoreInputs.length) index = els.scoreInputs.length - 1;
+        state.currentScoreIndex = index;
+        var el = els.scoreInputs[index];
+        // チェックが入っている列はスキップ
+        if (el.disabled) {
+          // 次の未チェック列を探す
+          var found = false;
+          for (var i = index + 1; i < els.scoreInputs.length; i++) {
+            if (!els.scoreInputs[i].disabled) {
+              focusScoreInput(i);
+              found = true;
+              break;
+            }
+          }
+          if (!found) {
+            // 前方向を探す
+            for (var j = index - 1; j >= 0; j--) {
+              if (!els.scoreInputs[j].disabled) {
+                focusScoreInput(j);
+                found = true;
+                break;
+              }
+            }
+          }
+          if (!found) return; // 全てチェックされている
+        } else {
+          el.focus();
+          el.select();
+        }
+      }
+
+      function moveScore(delta) {
+        var idx = state.currentScoreIndex || 0;
+        var startIdx = idx;
+        var direction = delta > 0 ? 1 : -1;
+        var attempts = 0;
+        while (attempts < els.scoreInputs.length) {
+          idx += direction;
+          if (idx < 0) idx = 0;
+          if (idx >= els.scoreInputs.length) idx = els.scoreInputs.length - 1;
+          if (idx === startIdx) break; // 一周した
+          if (!els.scoreInputs[idx].disabled) {
+            focusScoreInput(idx);
+            return;
+          }
+          attempts++;
+        }
+        // 見つからなかった場合は端で止まる
+        if (delta > 0) {
+          idx = els.scoreInputs.length - 1;
+        } else {
+          idx = 0;
+        }
+        if (!els.scoreInputs[idx].disabled) {
+          focusScoreInput(idx);
+        }
+      }
+
+      function findFirstUncheckedScoreIndex() {
+        for (var i = 0; i < els.scoreInputs.length; i++) {
+          if (!els.scoreInputs[i].disabled) {
+            return i;
+          }
+        }
+        return -1; // 全てチェックされている
+      }
+
+      // 行移動時の挙動: dirtyならlocalStorageに退避してから移動（通信なし・同期的に保存）
+      // 通信を待たずに即座に移動することで、上下キー操作時のラグを解消
+      function moveRow(delta) {
+        if (!state.rows.length) return;
+        var target = state.currentIndex + delta;
+        if (target < 0 || target >= state.rows.length) return;
+
+        // dirtyならlocalStorageに退避（localStorage保存は同期処理）
+        if (state.dirty) {
+          saveCurrentRow(function (ok) {
+            // localStorage保存は同期処理なので、保存完了後にコールバックが実行される
+            // ただし、移動は保存を待たずに即座に実行する（ラグをなくすため）
+          });
+        }
+        
+        // 通信を待たずに即座に移動（↓のたび通信しないのでラグが消える）
+        state.currentIndex = target;
+        renderCurrentRow();
+      }
+
+      // シート移動（Shift+←/→）
+      function moveSheet_(delta) {
+        if (!state.sheetNames || !state.sheetNames.length) return;
+        if (!els.sheetSelect) return;
+        var cur = String(state.currentSheet || els.sheetSelect.value || '').trim();
+        var idx = state.sheetNames.indexOf(cur);
+        if (idx < 0) idx = 0;
+        var next = idx + delta;
+        if (next < 0 || next >= state.sheetNames.length) return;
+
+        // dirtyならlocalStorageに退避（通信なし）
+        if (state.dirty) {
+          saveCurrentRow();
+        }
+
+        state.currentSheet = state.sheetNames[next];
+        els.sheetSelect.value = state.currentSheet;
+        loadInitData();
+      }
+
+      function generateAutoComment(scores) {
+        return '';
+      }
+
+      function normalizeHeaderKey_(key) {
+        return String(key || '')
+          .toLowerCase()
+          .replace(/\s+/g, '')
+          .replace(/[_-]/g, '');
+      }
+
+      // 空白は全部カウントしない（半角/全角/改行/タブ等）
+      function countCharsNoWhitespace_(s) {
+        s = (s ?? '').replace(/\s/g, '').replace(/\u3000/g, ''); // \sに全角スペースが入らない環境対策
+        return Array.from(s).length;
+      }
+
+      function findHeaderKey_(headers, normalizedCandidates) {
+        for (var i = 0; i < headers.length; i++) {
+          var h = headers[i];
+          if (!h) continue;
+          var nh = normalizeHeaderKey_(h);
+          for (var j = 0; j < normalizedCandidates.length; j++) {
+            if (nh === normalizedCandidates[j]) return h;
+          }
+        }
+        return '';
+      }
+
+      function loadRuleTemplates_(selectedTemplateId) {
+        if (!els.ruleTemplateSelect) return;
+        els.ruleTemplateSelect.innerHTML = '<option value="">読み込み中...</option>';
+
+        google.script.run
+          .withSuccessHandler(function (res) {
+            var current = String(selectedTemplateId || (state.config && state.config.ruleTemplateId) || '').trim();
+            var options = [];
+            var seen = {};
+
+            function addOpt(id, label) {
+              id = String(id || '').trim();
+              if (!id) return;
+              if (seen[id]) return;
+              seen[id] = true;
+              options.push({ id: id, label: label || id });
+            }
+
+            if (res && res.ok && Array.isArray(res.templates)) {
+              var headers = res.headers || [];
+              var templateIdKey = findHeaderKey_(headers, ['templateid', 'template', 'id']);
+              var enabledKey = findHeaderKey_(headers, ['enabled', 'enable', 'active', 'isenabled', 'isactive']);
+              var nameKey = findHeaderKey_(headers, ['name', 'label', 'title', 'displayname']);
+
+              // state.ruleTemplatesById を構築（表示とデータを分離）
+              state.ruleTemplatesById = {};
+              res.templates.forEach(function (row) {
+                if (!row || typeof row !== 'object') return;
+                if (!enabledKey) return;
+                if (!isEnabled_(row[enabledKey])) return;
+                var id = templateIdKey ? String(row[templateIdKey] || '').trim() : '';
+                var label = nameKey ? String(row[nameKey] || '').trim() : '';
+                if (id) {
+                  state.ruleTemplatesById[id] = { label: label || id };
+                }
+              });
+
+              res.templates.forEach(function (row) {
+                if (!row || typeof row !== 'object') return;
+                if (!enabledKey) return;
+                if (!isEnabled_(row[enabledKey])) return;
+                var id = templateIdKey ? row[templateIdKey] : '';
+                var label = nameKey ? row[nameKey] : '';
+                addOpt(id, label ? (String(label) + ' (' + String(id).trim() + ')') : String(id));
+              });
+              
+              // current が存在し、かつ実際に _templates に存在する場合のみ追加
+              // （デフォルト値の 'default' など、存在しないテンプレートを除外）
+              if (current && state.ruleTemplatesById[current]) {
+                // 既に addOpt で追加されているはずなので、ここでは何もしない
+                // ただし、念のため current が options に含まれているか確認
+                var found = false;
+                for (var i = 0; i < options.length; i++) {
+                  if (options[i].id === current) {
+                    found = true;
+                    break;
+                  }
+                }
+                // 見つからない場合（通常は発生しないが、念のため）は追加しない
+                // 既に res.templates から追加されているはずなので
+              }
+            }
+
+            // 表示更新
+            els.ruleTemplateSelect.innerHTML = '';
+            // 先頭に「（未選択）」オプションを追加
+            var emptyOpt = document.createElement('option');
+            emptyOpt.value = '';
+            emptyOpt.textContent = '（未選択）';
+            els.ruleTemplateSelect.appendChild(emptyOpt);
+            
+            if (!options.length) {
+              // テンプレートがない場合でも「（未選択）」は表示済み
+              // 再読み込みボタンを非表示
+              if (els.reloadTemplatesBtn) {
+                els.reloadTemplatesBtn.style.display = 'none';
+              }
+              // current が空でない場合は空にリセット
+              if (current) {
+                els.ruleTemplateSelect.value = '';
+              }
+              return;
+            }
+            options.forEach(function (o) {
+              var opt = document.createElement('option');
+              opt.value = o.id;
+              opt.textContent = o.label;
+              els.ruleTemplateSelect.appendChild(opt);
+            });
+            if (current) {
+              els.ruleTemplateSelect.value = current;
+            }
+            // 再読み込みボタンを非表示（成功時）
+            if (els.reloadTemplatesBtn) {
+              els.reloadTemplatesBtn.style.display = 'none';
+            }
+            // タイトルを更新
+            updateRulesPanelTitle_();
+            // ルール表示を更新（テンプレ読み込み完了後に反映）
+            if (current) {
+              // テンプレ切替時と同様にルールを一括ロード
+              clearCurrentTemplate();
+              loadCurrentTemplateRules(current);
+              renderRulesSummary(current);
+            }
+          })
+          .withFailureHandler(function (err) {
+            // 失敗時は必ず「(取得失敗)」1項目に置換し、再試行UIを表示
+            var errorMsg = err && err.message ? String(err.message).substring(0, 40) : 'エラー';
+            els.ruleTemplateSelect.innerHTML = '<option value="">(取得失敗: ' + errorMsg + ')</option>';
+            
+            // 再読み込みボタンを表示
+            if (els.reloadTemplatesBtn) {
+              els.reloadTemplatesBtn.style.display = 'inline-block';
+            }
+            
+            // 現在選択中のテンプレIDが分かっていれば、状態を保持
+            var current = String(selectedTemplateId || (state.config && state.config.ruleTemplateId) || '').trim();
+            if (current) {
+              state.config = state.config || {};
+              state.config.ruleTemplateId = current;
+            }
+          })
+          .apiGetRuleTemplates();
+      }
+
+      // 右パネルのタイトルを更新（templateId/label表示）
+      function updateRulesPanelTitle_() {
+        if (!els.rulesPanelTitle) return;
+        var templateId = '';
+        if (state.config && state.config.ruleTemplateId) {
+          templateId = String(state.config.ruleTemplateId).trim();
+        } else if (els.ruleTemplateSelect && els.ruleTemplateSelect.value) {
+          templateId = String(els.ruleTemplateSelect.value).trim();
+        }
+        if (!templateId) {
+          els.rulesPanelTitle.textContent = '現在のテンプレ条件（未設定）';
+          return;
+        }
+        var templateInfo = state.ruleTemplatesById[templateId];
+        var label = '';
+        if (templateInfo && templateInfo.label) {
+          label = templateInfo.label;
+        } else if (els.ruleTemplateSelect) {
+          // フォールバック: selectの表示から抽出を試みる
+          var selectedOption = els.ruleTemplateSelect.options[els.ruleTemplateSelect.selectedIndex];
+          if (selectedOption) {
+            var optionText = selectedOption.textContent || '';
+            // "(id)" の形式から label を抽出
+            var match = optionText.match(/^(.+?)\s*\(/);
+            if (match) {
+              label = match[1].trim();
+            } else {
+              label = optionText;
+            }
+          }
+        }
+        if (!label) {
+          label = templateId;
+        }
+        els.rulesPanelTitle.textContent = '現在のテンプレ条件（' + templateId + ' / ' + label + '）';
+      }
+
+      // enabled判定（1/0 または '1'/'0'）
+      function isEnabled_(v) {
+  if (v === 1) return true;
+  if (v === '1') return true;
+  if (v === true) return true;
+  var s = String(v || '').trim().toLowerCase();
+  if (s === 'true') return true;
+  return false;
+}
+
+      // メッセージを省略表示（60文字程度）
+      function truncateMessage_(text, maxLen) {
+        maxLen = maxLen || 60;
+        if (!text || typeof text !== 'string') return '';
+        text = text.trim();
+        if (text.length <= maxLen) return text;
+        return text.substring(0, maxLen) + '...';
+      }
+
+      // ルール一覧を表示
+      function renderRulesSummary(templateId) {
+        if (!els.rulesSummary) return;
+        var tid = String(templateId || '').trim();
+        if (!tid) {
+          // 空文字の場合は確実にクリア（innerHTML を空にしてから textContent を設定）
+          els.rulesSummary.innerHTML = '';
+          els.rulesSummary.textContent = '（ルール未設定）';
+          return;
+        }
+
+        // リクエスト時のテンプレートIDを保存（非同期リクエストの競合を防ぐため）
+        var requestTemplateId = tid;
+        
+        google.script.run
+          .withSuccessHandler(function (res) {
+            if (!els.rulesSummary) return;
+            // リクエスト時のテンプレートIDと現在のテンプレートIDが一致する場合のみ更新
+            var currentTemplateId = (state.config && state.config.ruleTemplateId) ? String(state.config.ruleTemplateId).trim() : '';
+            if (requestTemplateId !== currentTemplateId) {
+              // テンプレートIDが変更されている場合は無視（古いリクエストの結果）
+              return;
+            }
+            if (!res || !res.ok) {
+              var errorMsg = '（ルール取得失敗 / 未設定）';
+              if (res && res.error) {
+                errorMsg += ' ' + String(res.error).substring(0, 40);
+              }
+              els.rulesSummary.innerHTML = '';
+              els.rulesSummary.textContent = errorMsg;
+              return;
+            }
+
+            var rules = res.rules || [];
+            var headers = res.headers || [];
+
+            // skipped の合計を計算
+            var skippedTotal = 0;
+            if (res.skipped && typeof res.skipped === 'object') {
+              skippedTotal = (res.skipped.disabled || 0) +
+                (res.skipped.invalidPriority || 0) +
+                (res.skipped.invalidRow || 0);
+            }
+
+            // ヘッダ名を取得
+            var whenKey = findHeaderKey_(headers, ['whenexpr', 'when', 'expr', 'condition', 'if']);
+            // 条件式の表示名（任意）：whenLabel 列があれば優先して表示する
+            // - "whenLabel" / "when_label" / "when label" は normalizeHeaderKey_ により同一扱い（whenlabel）
+            var whenLabelKey = findHeaderKey_(headers, ['whenlabel']);
+            var messageKey = findHeaderKey_(headers, ['message', 'text', 'output', 'result', 'comment']);
+            var priorityKey = findHeaderKey_(headers, ['priority', 'prio', 'order', 'rank']);
+            var visibleKey = findHeaderKey_(headers, ['visible', 'show', 'display']);
+
+            // サーバ側で既にフィルタ済み・ソート済みだが、互換性のため表示はそのまま使用
+            if (rules.length === 0) {
+              var emptyMsg = '（ルール未設定）';
+              if (skippedTotal > 0) {
+                emptyMsg += ' ⚠ skipped=' + skippedTotal;
+              }
+              els.rulesSummary.textContent = emptyMsg;
+              return;
+            }
+
+            // DOM生成で表示（XSS対策：textContentのみ使用）
+            els.rulesSummary.innerHTML = '';
+            var shown = 0;
+            for (var j = 0; j < rules.length; j++) {
+              var r = rules[j];
+              // visible=1 のみ表示（0/空欄は非表示）
+              if (visibleKey) {
+                var vv = r[visibleKey];
+                var show = (vv === 1 || vv === '1' || String(vv || '').trim() === '1');
+                if (!show) continue;
+              }
+              var whenExpr = whenKey ? String(r[whenKey] || '').trim() : '';
+              var whenLabel = whenLabelKey ? String(r[whenLabelKey] || '').trim() : '';
+              var whenDisplay = whenLabel || whenExpr;
+              var message = messageKey ? String(r[messageKey] || '').trim() : '';
+              var msgTruncated = truncateMessage_(message, 60);
+              var rowNumber = r._rowNumber || null;
+
+              var lineEl = document.createElement('div');
+              lineEl.className = 'rule-line';
+              if (rowNumber != null) {
+                lineEl.setAttribute('data-row-number', String(rowNumber));
+              }
+
+              var numSpan = document.createElement('span');
+              numSpan.className = 'rule-num';
+              numSpan.textContent = (shown + 1) + '. ';
+              lineEl.appendChild(numSpan);
+
+              var whenSpan = document.createElement('span');
+              whenSpan.className = 'rule-when';
+              whenSpan.textContent = whenDisplay;
+              lineEl.appendChild(whenSpan);
+
+              var separator = document.createTextNode(' ： ');
+              lineEl.appendChild(separator);
+
+              var msgSpan = document.createElement('span');
+              msgSpan.className = 'rule-msg';
+              msgSpan.textContent = msgTruncated;
+              lineEl.appendChild(msgSpan);
+
+              els.rulesSummary.appendChild(lineEl);
+              shown++;
+            }
+            if (shown === 0) {
+              els.rulesSummary.textContent = '（表示対象のルールがありません）';
+              return;
+            }
+
+            // skipped がある場合は警告を追加
+            if (skippedTotal > 0) {
+              var warnEl = document.createElement('div');
+              warnEl.className = 'rule-warn';
+              warnEl.style.cssText = 'margin-top:8px; padding:4px 8px; background:#fff3cd; border:1px solid #ffc107; border-radius:4px; font-size:12px; color:#856404;';
+              warnEl.textContent = '⚠ 無効ルール ' + skippedTotal + ' 件がスキップされました';
+              els.rulesSummary.appendChild(warnEl);
+            }
+
+            // ハイライトを更新
+            updateRulesSummaryHighlight_(tid);
+          })
+          .withFailureHandler(function (err) {
+            if (!els.rulesSummary) return;
+            // リクエスト時のテンプレートIDと現在のテンプレートIDが一致する場合のみ更新
+            var currentTemplateId = (state.config && state.config.ruleTemplateId) ? String(state.config.ruleTemplateId).trim() : '';
+            if (requestTemplateId !== currentTemplateId) {
+              // テンプレートIDが変更されている場合は無視（古いリクエストの結果）
+              return;
+            }
+            els.rulesSummary.innerHTML = '';
+            els.rulesSummary.textContent = '（ルール取得失敗 / 未設定）';
+          })
+          .apiGetRules({ templateId: tid });
+      }
+
+      // ルール一覧のハイライトを更新
+      function updateRulesSummaryHighlight_(currentTemplateId) {
+        if (!els.rulesSummary) return;
+        var templateId = String(currentTemplateId || '').trim();
+        var matchedRowNumber = null;
+
+        // 現在表示中のテンプレと一致する場合のみハイライト
+        if (state.lastMatchedRule && state.lastMatchedRule.templateId === templateId) {
+          matchedRowNumber = state.lastMatchedRule.matchedRowNumber;
+        }
+
+        // すべてのルール行から matched クラスを除去
+        var lines = els.rulesSummary.querySelectorAll('.rule-line');
+        for (var i = 0; i < lines.length; i++) {
+          lines[i].classList.remove('rule-line--matched');
+        }
+
+        // マッチした行にクラスを付与
+        if (matchedRowNumber != null) {
+          var targetLine = els.rulesSummary.querySelector('[data-row-number="' + String(matchedRowNumber) + '"]');
+          if (targetLine) {
+            targetLine.classList.add('rule-line--matched');
+          }
+        }
+      }
+
+      // 列記号 "AA" → 1始まり列番号（クライアント側版）
+      function colA1ToIndexClient_(col) {
+        col = String(col || '').toUpperCase().trim();
+        if (!col) return 0;
+        var sum = 0;
+        for (var i = 0; i < col.length; i++) {
+          var c = col.charCodeAt(i);
+          if (c < 65 || c > 90) return 0; // 不正な文字は0を返す
+          sum = sum * 26 + (c - 64);
+        }
+        return sum;
+      }
+
+      // mergeRule をクライアント側で計算する
+      // - 旧仕様: + / , / : / / / 単一スロット
+      // - 新仕様: & 連結 / label1..5 / "..." / map(x,"1=×,2=△") など
+      function computeMerge_(rule, slotValues, slotLabels) {
+        // slotValues: [{ slot: number, value: any }]
+        if (!rule || typeof rule !== 'string') return null;
+        var text = rule.trim();
+        if (!text) return null;
+
+        // スロット→値のマップ（未入力は未定義）
+        var valueMap = {};
+        (slotValues || []).forEach(function (sv) {
+          if (!sv) return;
+          valueMap[sv.slot] = sv.value;
+        });
+        var labels = normalizeSlotLabels_(slotLabels || []);
+
+        function hasNewSyntax_(s) {
+          return s.indexOf('&') >= 0 || /label\s*[1-5]\b/i.test(s) || /\bmap\s*\(/i.test(s) || s.indexOf('"') >= 0;
+        }
+
+        function splitTopLevel_(s, delimChar) {
+          var parts = [];
+          var buf = '';
+          var inStr = false;
+          var esc = false;
+          var depth = 0;
+          for (var i = 0; i < s.length; i++) {
+            var ch = s[i];
+            if (inStr) {
+              buf += ch;
+              if (esc) {
+                esc = false;
+              } else if (ch === '\\') {
+                esc = true;
+              } else if (ch === '"') {
+                inStr = false;
+              }
+              continue;
+            }
+            if (ch === '"') {
+              inStr = true;
+              buf += ch;
+              continue;
+            }
+            if (ch === '(') {
+              depth++;
+              buf += ch;
+              continue;
+            }
+            if (ch === ')') {
+              depth = Math.max(0, depth - 1);
+              buf += ch;
+              continue;
+            }
+            if (depth === 0 && ch === delimChar) {
+              parts.push(buf.trim());
+              buf = '';
+              continue;
+            }
+            buf += ch;
+          }
+          parts.push(buf.trim());
+          return parts;
+        }
+
+        function parseStringLiteral_(s) {
+          s = String(s || '');
+          if (!s || s[0] !== '"') return { ok: false, error: '文字列リテラルは "..." で指定してください' };
+          var out = '';
+          var esc = false;
+          for (var i = 1; i < s.length; i++) {
+            var ch = s[i];
+            if (esc) {
+              // 最低限のエスケープ
+              if (ch === '"' || ch === '\\') out += ch;
+              else out += ch;
+              esc = false;
+              continue;
+            }
+            if (ch === '\\') {
+              esc = true;
+              continue;
+            }
+            if (ch === '"') {
+              var rest = s.slice(i + 1).trim();
+              if (rest) return { ok: false, error: '文字列リテラルの後に余分な文字があります' };
+              return { ok: true, value: out };
+            }
+            out += ch;
+          }
+          return { ok: false, error: '文字列リテラルの " が閉じていません' };
+        }
+
+        function parseMapDict_(dictStr) {
+          var dict = {};
+          var raw = String(dictStr == null ? '' : dictStr);
+          if (!raw.trim()) return { ok: false, error: 'map の辞書が空です' };
+          var parts = raw.split(',');
+          for (var i = 0; i < parts.length; i++) {
+            var p = parts[i];
+            if (p == null) continue;
+            var t = String(p).trim();
+            if (!t) continue;
+            var eq = t.indexOf('=');
+            if (eq <= 0) return { ok: false, error: 'map の辞書は "key=value" の形式で指定してください' };
+            var k = t.slice(0, eq).trim();
+            var v = t.slice(eq + 1).trim();
+            if (!k) return { ok: false, error: 'map のキーが空です' };
+            dict[k] = v;
+          }
+          return { ok: true, dict: dict };
+        }
+
+        function evalTerm_(term) {
+          var t = String(term || '').trim();
+          if (!t) return { ok: false, error: '空の項が含まれています' };
+
+          // "..."（文字列）
+          if (t[0] === '"') {
+            var lit = parseStringLiteral_(t);
+            if (!lit.ok) return lit;
+            return { ok: true, value: lit.value };
+          }
+
+          // labelN
+          var mLabel = t.match(/^label\s*([1-5])$/i);
+          if (mLabel) {
+            var li = parseInt(mLabel[1], 10);
+            return { ok: true, value: labels[li - 1] || '' };
+          }
+
+          // map(arg,"k=v,...")
+          var mMap = t.match(/^map\s*\(([\s\S]*)\)$/i);
+          if (mMap) {
+            var inner = String(mMap[1] || '').trim();
+            if (!inner) return { ok: false, error: 'map() の引数が空です' };
+            // トップレベルの "," で2分割（文字列/括弧を考慮）
+            var args = splitTopLevel_(inner, ',');
+            if (!args || args.length !== 2) return { ok: false, error: 'map(arg,"k=v,...") の形式で指定してください' };
+            var argRaw = args[0].trim();
+            var dictRaw = args[1].trim();
+            var dictLit = parseStringLiteral_(dictRaw);
+            if (!dictLit.ok) return dictLit;
+            var dictParsed = parseMapDict_(dictLit.value);
+            if (!dictParsed.ok) return dictParsed;
+
+            var argValRes = evalTerm_(argRaw);
+            if (!argValRes.ok) return argValRes;
+            // map の対象は null になりうる（スロット未入力など）
+            if (argValRes.value === null || argValRes.value === undefined || String(argValRes.value) === '') {
+              return { ok: true, value: null };
+            }
+            var key = String(argValRes.value).trim();
+            if (dictParsed.dict.hasOwnProperty(key)) {
+              return { ok: true, value: String(dictParsed.dict[key]) };
+            }
+            return { ok: true, value: String(argValRes.value) };
+          }
+
+          // slot N（1..5）
+          var nSlot = parseInt(t, 10);
+          if (!isNaN(nSlot) && String(nSlot) === t && nSlot >= 1 && nSlot <= 5) {
+            var v = valueMap[nSlot];
+            if (v === '' || v === null || v === undefined) return { ok: true, value: null };
+            return { ok: true, value: String(v) };
+          }
+
+          return { ok: false, error: '解釈できない項: ' + t };
+        }
+
+        if (hasNewSyntax_(text)) {
+          // & 連結（単一項も許可）
+          var terms = splitTopLevel_(text, '&');
+          if (!terms || !terms.length) return null;
+          var out = '';
+          for (var i = 0; i < terms.length; i++) {
+            var r = evalTerm_(terms[i]);
+            if (!r.ok) return null;
+            if (r.value === null) return null; // 必須値欠損
+            out += String(r.value);
+          }
+          return out;
+        }
+
+        function getSlotNumbers_(parts) {
+          var nums = [];
+          for (var i = 0; i < parts.length; i++) {
+            var n = parseInt(parts[i], 10);
+            if (isNaN(n) || n < 1 || n > 5) return null;
+            nums.push(n);
+          }
+          return nums;
+        }
+
+        // 合計: 1+2+3（数値のみ）
+        if (text.indexOf('+') >= 0) {
+          var sumParts = text.split('+').map(function (p) { return p.trim(); });
+          var slots = getSlotNumbers_(sumParts);
+          if (!slots) return null;
+          var total = 0;
+          for (var i = 0; i < slots.length; i++) {
+            var v = valueMap[slots[i]];
+            var n = parseFloat(v);
+            if (isNaN(n)) return null;
+            total += n;
+          }
+          return total;
+        }
+
+        // 配列: 1,2,3 → "[1,2,3]"（数値のみ）
+        if (text.indexOf(',') >= 0) {
+          var arrParts = text.split(',').map(function (p) { return p.trim(); });
+          var slotsArr = getSlotNumbers_(arrParts);
+          if (!slotsArr) return null;
+          var arr = [];
+          for (var j = 0; j < slotsArr.length; j++) {
+            var vv = valueMap[slotsArr[j]];
+            if (vv === '' || vv === null || vv === undefined) return null;
+            var num = parseFloat(vv);
+            if (isNaN(num)) return null;
+            arr.push(num);
+          }
+          return '[' + arr.join(',') + ']';
+        }
+
+        // 連結（区切り文字）: 1:2 or 1/2（数値のみ。旧仕様維持）
+        if (text.indexOf(':') >= 0 || text.indexOf('/') >= 0) {
+          var sep = text.indexOf(':') >= 0 ? ':' : '/';
+          var concatParts = text.split(sep).map(function (p) { return p.trim(); });
+          var slotsConcat = getSlotNumbers_(concatParts);
+          if (!slotsConcat) return null;
+          var strs = [];
+          for (var k = 0; k < slotsConcat.length; k++) {
+            var vv2 = valueMap[slotsConcat[k]];
+            if (vv2 === '' || vv2 === null || vv2 === undefined) return null;
+            var num2 = parseFloat(vv2);
+            if (isNaN(num2)) return null;
+            strs.push(String(num2));
+          }
+          return strs.join(sep);
+        }
+
+        // 単一スロット参照（数値のみ。旧仕様維持）
+        var single = parseInt(text, 10);
+        if (!isNaN(single) && String(single) === text && single >= 1 && single <= 5) {
+          var sv = valueMap[single];
+          if (sv === '' || sv === null || sv === undefined) return null;
+          var nSingle = parseFloat(sv);
+          if (isNaN(nSingle)) return null;
+          return nSingle;
+        }
+
+        return null;
+      }
+
+      // ルールAPIへ渡す vars を作る（score1..5）
+      function buildRuleVars_(scores) {
+        var scoreNums = [null, null, null, null, null];
+        
+        // すべてのスコア値を変数として利用可能にする
+        for (var i = 0; i < 5; i++) {
+          var value = scores[i];
+          var n = parseFloat(value);
+          if (!isNaN(n)) {
+            scoreNums[i] = n;
+          }
+        }
+        
+        // vars構築（score1..5）
+        var vars = {};
+        for (var i = 0; i < 5; i++) {
+          vars['score' + (i + 1)] = scoreNums[i];
+        }
+
+        return vars;
+      }
+
+      function buildEvalVars(vars) {
+        var evalVars = {};
+        for (var key in vars) {
+          if (vars.hasOwnProperty(key)) {
+            evalVars[key] = vars[key];
+          }
+        }
+        return evalVars;
+      }
+
+      // ========================================
+      // whenExpr DSL 評価器（クライアント側、eval禁止）
+      // ========================================
+
+      /**
+       * 変数パスから値を取得（ドット記法対応）
+       * @param {Object} vars - 変数辞書
+       * @param {string} path - 変数パス（例: "score1", "a.b.c"）
+       * @return {*} 変数の値（未定義時は undefined）
+       */
+      function getVarByPath_(vars, path) {
+        if (!path || typeof path !== 'string') return undefined;
+        var cur = vars;
+        var parts = path.split('.');
+        for (var i = 0; i < parts.length; i++) {
+          var p = parts[i];
+          if (!p) return undefined;
+          if (!cur || typeof cur !== 'object') return undefined;
+          cur = cur[p];
+        }
+        return cur;
+      }
+
+      /**
+       * 値をbooleanに変換（whenExpr仕様準拠）
+       * @param {*} v - 変換する値
+       * @return {boolean}
+       */
+      function toBooleanWhenExpr_(v) {
+        if (v === true) return true;
+        if (v === false) return false;
+        if (v === null || v === undefined) return false;
+        if (typeof v === 'number') return !isNaN(v) && v !== 0;
+        if (typeof v === 'string') return v.trim() !== '';
+        return true;
+      }
+
+      /**
+       * 値を数値に変換（可能な場合）
+       * @param {*} v - 変換する値
+       * @return {number|NaN} 数値またはNaN
+       */
+      function toNumberIfNumeric_(v) {
+        if (typeof v === 'number') return v;
+        if (typeof v === 'string') {
+          var s = v.trim();
+          if (/^-?\d+(\.\d+)?$/.test(s)) return Number(s);
+        }
+        return NaN;
+      }
+
+      /**
+       * 比較演算を実行（whenExpr仕様準拠）
+       * @param {*} a - 左辺
+       * @param {string} op - 演算子（==, !=, <, <=, >, >=）
+       * @param {*} b - 右辺
+       * @return {boolean}
+       */
+      function compareWhenExpr_(a, op, b) {
+        var an = toNumberIfNumeric_(a);
+        var bn = toNumberIfNumeric_(b);
+        var bothNumeric = (!isNaN(an) && !isNaN(bn));
+
+        if (op === '==' || op === '!=') {
+          var eq;
+          if (bothNumeric) {
+            eq = (an === bn);
+          } else if (typeof a === 'boolean' || typeof b === 'boolean') {
+            eq = (toBooleanWhenExpr_(a) === toBooleanWhenExpr_(b));
+          } else {
+            eq = (String(a === undefined ? '' : a) === String(b === undefined ? '' : b));
+          }
+          return (op === '==') ? eq : !eq;
+        }
+
+        if (bothNumeric) {
+          if (op === '>=') return an >= bn;
+          if (op === '<=') return an <= bn;
+          if (op === '>') return an > bn;
+          if (op === '<') return an < bn;
+          return false;
+        }
+
+        var as = String(a === undefined ? '' : a);
+        var bs = String(b === undefined ? '' : b);
+        if (op === '>=') return as >= bs;
+        if (op === '<=') return as <= bs;
+        if (op === '>') return as > bs;
+        if (op === '<') return as < bs;
+        return false;
+      }
+
+      /**
+       * whenExprをトークン化
+       * and/or/not と &&/||/! を同じ種別に正規化
+       * @param {string} expr - 式文字列
+       * @return {Array<{type:string, value:*}>} トークン配列
+       * @throws {Error} 構文エラー時
+       */
+      function tokenizeWhenExpr(expr) {
+        if (typeof expr !== 'string') {
+          throw new Error('式は文字列である必要があります');
+        }
+        expr = expr.trim();
+        if (!expr) {
+          return [];
+        }
+
+        var tokens = [];
+        var i = 0;
+
+        function push(type, value) {
+          tokens.push({ type: type, value: value });
+        }
+
+        while (i < expr.length) {
+          var ch = expr[i];
+          
+          // 空白をスキップ
+          if (/\s/.test(ch)) {
+            i++;
+            continue;
+          }
+
+          // 2文字演算子を先にチェック
+          var two = expr.slice(i, i + 2);
+          if (two === '&&' || two === '||' || two === '==' || two === '!=' || two === '>=' || two === '<=') {
+            push('op', two);
+            i += 2;
+            continue;
+          }
+
+          // 1文字演算子・括弧
+          if (ch === '(' || ch === ')') {
+            push('paren', ch);
+            i++;
+            continue;
+          }
+          if (ch === '!' || ch === '>' || ch === '<') {
+            push('op', ch);
+            i++;
+            continue;
+          }
+
+          // 文字列リテラル
+          if (ch === '"' || ch === "'") {
+            var quote = ch;
+            i++;
+            var out = '';
+            while (i < expr.length) {
+              var c = expr[i];
+              if (c === '\\') {
+                var n = expr[i + 1];
+                if (n === 'n') out += '\n';
+                else if (n === 't') out += '\t';
+                else if (n === 'r') out += '\r';
+                else if (n === '\\') out += '\\';
+                else if (n === quote) out += quote;
+                else out += n;
+                i += 2;
+                continue;
+              }
+              if (c === quote) {
+                i++;
+                break;
+              }
+              out += c;
+              i++;
+            }
+            if (i > expr.length) {
+              throw new Error('文字列が閉じられていません');
+            }
+            push('string', out);
+            continue;
+          }
+
+          // 数値リテラル
+          if (/[0-9]/.test(ch) || (ch === '.' && /[0-9]/.test(expr[i + 1]))) {
+            var start = i;
+            i++;
+            while (i < expr.length && /[0-9.]/.test(expr[i])) i++;
+            var raw = expr.slice(start, i);
+            var num = Number(raw);
+            if (isNaN(num)) {
+              throw new Error('無効な数値: ' + raw);
+            }
+            push('number', num);
+            continue;
+          }
+
+          // 識別子（変数名、予約語）
+          if (/[A-Za-z_]/.test(ch)) {
+            var s = i;
+            i++;
+            while (i < expr.length && /[A-Za-z0-9_.]/.test(expr[i])) i++;
+            var id = expr.slice(s, i);
+            
+            // 予約語を正規化
+            if (id === 'and') {
+              push('op', '&&');
+            } else if (id === 'or') {
+              push('op', '||');
+            } else if (id === 'not') {
+              push('op', '!');
+            } else if (id === 'true') {
+              push('boolean', true);
+            } else if (id === 'false') {
+              push('boolean', false);
+            } else if (id === 'null') {
+              push('null', null);
+            } else {
+              push('identifier', id);
+            }
+            continue;
+          }
+
+          throw new Error('予期しない文字: ' + ch);
+        }
+
+        return tokens;
+      }
+
+      /**
+       * トークン列をASTにパース（再帰下降パーサー）
+       * 優先順位: NOT > 比較 > AND > OR
+       * @param {Array} tokens - トークン配列
+       * @return {Object} ASTノード
+       * @throws {Error} 構文エラー時
+       */
+      function parseWhenExpr(tokens) {
+        if (!Array.isArray(tokens) || tokens.length === 0) {
+          throw new Error('トークンが空です');
+        }
+
+        var idx = 0;
+
+        function peek() {
+          return idx < tokens.length ? tokens[idx] : null;
+        }
+
+        function next() {
+          return idx < tokens.length ? tokens[idx++] : null;
+        }
+
+        function expect(type, value) {
+          var t = next();
+          if (!t || t.type !== type || (value !== undefined && t.value !== value)) {
+            throw new Error('予期しないトークン: ' + (t ? JSON.stringify(t) : 'EOF'));
+          }
+          return t;
+        }
+
+        // 最上位: OR（優先順位最低）
+        function parseOr() {
+          var left = parseAnd();
+          while (peek() && peek().type === 'op' && peek().value === '||') {
+            next();
+            var right = parseAnd();
+            left = { type: 'logical', op: '||', left: left, right: right };
+          }
+          return left;
+        }
+
+        // AND（優先順位3）
+        function parseAnd() {
+          var left = parseNot();
+          while (peek() && peek().type === 'op' && peek().value === '&&') {
+            next();
+            var right = parseNot();
+            left = { type: 'logical', op: '&&', left: left, right: right };
+          }
+          return left;
+        }
+
+        // NOT（優先順位1、最高）
+        function parseNot() {
+          if (peek() && peek().type === 'op' && peek().value === '!') {
+            next();
+            var operand = parseNot();
+            return { type: 'unary', op: '!', operand: operand };
+          }
+          return parseCompare();
+        }
+
+        // 比較（優先順位2）
+        function parseCompare() {
+          var left = parsePrimary();
+          var t = peek();
+          if (t && t.type === 'op' && (t.value === '==' || t.value === '!=' || t.value === '>=' || t.value === '<=' || t.value === '>' || t.value === '<')) {
+            var op = next().value;
+            var right = parsePrimary();
+            return { type: 'compare', op: op, left: left, right: right };
+          }
+          return left;
+        }
+
+        // 基本要素（リテラル、変数、括弧）
+        function parsePrimary() {
+          var t = peek();
+          if (!t) {
+            throw new Error('予期しない終端');
+          }
+
+          if (t.type === 'paren' && t.value === '(') {
+            next();
+            var expr = parseOr();
+            expect('paren', ')');
+            return expr;
+          }
+
+          t = next();
+          if (t.type === 'number' || t.type === 'string' || t.type === 'boolean' || t.type === 'null') {
+            return { type: 'literal', value: t.value };
+          }
+          if (t.type === 'identifier') {
+            return { type: 'variable', name: t.value };
+          }
+
+          throw new Error('予期しないトークン: ' + JSON.stringify(t));
+        }
+
+        var ast = parseOr();
+        if (idx < tokens.length) {
+          throw new Error('余分なトークンがあります');
+        }
+        return ast;
+      }
+
+      // 値（生値）を返す：比較の左右はこれを使う
+      function evaluateWhenValue(ast, evalVars) {
+        if (!ast || typeof ast !== 'object') throw new Error('無効なAST');
+        if (!evalVars || typeof evalVars !== 'object') evalVars = {};
+
+        switch (ast.type) {
+          case 'literal':
+            return ast.value;
+
+          case 'variable': {
+            var v = getVarByPath_(evalVars, ast.name);
+            return (v === undefined) ? null : v; // 未定義はnull扱い
+          }
+
+          // compare/logical/unary は「値」というより boolean を返すノードだが、
+          // 上位が値として扱う可能性があるので boolean のまま返す
+          case 'unary':
+            if (ast.op === '!') return !toBooleanWhenExpr_(evaluateWhenValue(ast.operand, evalVars));
+            throw new Error('未知の単項演算子: ' + ast.op);
+
+          case 'compare': {
+            var leftVal = evaluateWhenValue(ast.left, evalVars);
+            var rightVal = evaluateWhenValue(ast.right, evalVars);
+            return compareWhenExpr_(leftVal, ast.op, rightVal);
+          }
+
+          case 'logical': {
+            if (ast.op === '&&') {
+              var lb = toBooleanWhenExpr_(evaluateWhenValue(ast.left, evalVars));
+              if (!lb) return false; // short-circuit
+              return toBooleanWhenExpr_(evaluateWhenValue(ast.right, evalVars));
+            }
+            if (ast.op === '||') {
+              var lb2 = toBooleanWhenExpr_(evaluateWhenValue(ast.left, evalVars));
+              if (lb2) return true; // short-circuit
+              return toBooleanWhenExpr_(evaluateWhenValue(ast.right, evalVars));
+            }
+            throw new Error('未知の論理演算子: ' + ast.op);
+          }
+
+          default:
+            throw new Error('未知のASTノードタイプ: ' + ast.type);
+        }
+      }
+
+      // boolean を返す（外部向け）
+      function evaluateWhenExpr(ast, evalVars) {
+        return toBooleanWhenExpr_(evaluateWhenValue(ast, evalVars));
+      }
+
+      function evaluateWhenExprSafe(expr, evalVars) {
+        try {
+          if (!expr || typeof expr !== 'string' || !expr.trim()) {
+            return { ok: true, result: true, error: null };
+          }
+          var tokens = tokenizeWhenExpr(expr);
+          var ast = parseWhenExpr(tokens);
+          var result = evaluateWhenExpr(ast, evalVars);
+          return { ok: true, result: result, error: null };
+        } catch (e) {
+          return { ok: false, result: false, error: e && e.message ? String(e.message) : String(e) };
+        }
+      }
+
+      /**
+       * 現在のテンプレートルールをクリア（単一テンプレ運用の徹底）
+       * テンプレ切替時に旧ルール・古いAST・古いタイマーを確実に破棄する
+       * 
+       * 破棄対象:
+       * - state.currentRules: ルール配列
+       * - state.currentRulesHeaders: ヘッダー配列
+       * - state.currentRuleAsts: ASTキャッシュ（あれば）
+       * - state.applyRulesDebounceTimer: デバウンスタイマー
+       * - state.lastMatchedRule: マッチ情報（テンプレ切替時は無効）
+       * - state.lastApplyRulesKey: 適用キー（テンプレ切替時は無効）
+       */
+      function clearCurrentTemplate() {
+        state.currentTemplateId = '';
+        
+        // ルールデータを破棄
+        state.currentRules = null; // null=未ロード状態に戻す（参照を切る）
+        state.currentRulesHeaders = null; // ヘッダーもクリア
+        
+        // ASTキャッシュがあれば破棄（将来の拡張に備えて）
+        if (state.currentRuleAsts) {
+          state.currentRuleAsts = null;
+        }
+        
+        // デバウンスタイマーをクリア（古いタイマーが残らないように）
+        if (state.applyRulesDebounceTimer) {
+          clearTimeout(state.applyRulesDebounceTimer);
+          state.applyRulesDebounceTimer = null;
+        }
+        
+        // マッチ情報をクリア（テンプレ切替時は古いマッチ情報は無効）
+        state.lastMatchedRule = { templateId: '', matchedRowNumber: null };
+        
+        // 適用キーをクリア（テンプレ切替時は古いキーは無効）
+        state.lastApplyRulesKey = '';
+        
+        // 世代をインクリメント（非同期の競合を防ぐ）
+        state.templateGeneration = (state.templateGeneration || 0) + 1;
+
+        // 出力枠は「設定のみ」でいったん反映（テンプレ未ロード状態のUIを安定させる）
+        applyRuleOutputSlotsToUI_(resolveRuleOutputSlots_(state.config || {}, [], []));
+      }
+
+      /**
+       * 現在のテンプレートのルールを一括ロード
+       * テンプレ切替時に呼び出され、入力時の通信をゼロにするためルールを保持する
+       * @param {string} templateId - テンプレートID
+       */
+      function loadCurrentTemplateRules(templateId) {
+        if (!templateId || typeof templateId !== 'string') {
+          clearCurrentTemplate();
+          return;
+        }
+        
+        templateId = String(templateId).trim();
+        if (!templateId) {
+          clearCurrentTemplate();
+          return;
+        }
+
+        // 世代を保存（非同期の競合を防ぐ）
+        var generation = (state.templateGeneration || 0) + 1;
+        state.templateGeneration = generation;
+        state.currentTemplateId = templateId;
+        state.currentRules = null; // ロード中はnull
+
+        google.script.run
+          .withSuccessHandler(function (res) {
+            // 世代が一致する場合のみ state.currentRules にセット
+            if (state.templateGeneration !== generation) {
+              // 古い世代の応答は無視
+              return;
+            }
+
+            if (!res || !res.ok) {
+              // エラー時は空配列をセット（ルールなし扱い）
+              state.currentRules = [];
+              // ルール無しでも設定から出力枠を反映（UIが壊れないように）
+              applyRuleOutputSlotsToUI_(resolveRuleOutputSlots_(state.config || {}, [], []));
+              return;
+            }
+
+            // ルール配列とヘッダーを保存
+            state.currentRules = Array.isArray(res.rules) ? res.rules : [];
+            state.currentRulesHeaders = Array.isArray(res.headers) ? res.headers : [];
+
+            // ルールから target（サブグループ）を抽出して出力枠を解決・反映
+            applyRuleOutputSlotsToUI_(resolveRuleOutputSlots_(state.config || {}, state.currentRules, state.currentRulesHeaders));
+          })
+          .withFailureHandler(function (err) {
+            // エラー時も世代チェック
+            if (state.templateGeneration !== generation) {
+              return;
+            }
+            // エラー時は空配列をセット（ルールなし扱い）
+            state.currentRules = [];
+            state.currentRulesHeaders = [];
+            // ルール無しでも設定から出力枠を反映（UIが壊れないように）
+            applyRuleOutputSlotsToUI_(resolveRuleOutputSlots_(state.config || {}, [], []));
+          })
+          .apiGetRules({ templateId: templateId });
+      }
+
+      // -----------------------------
+      // ルール出力スロット（最大3）の解決・UI反映
+      // -----------------------------
+
+      function normalizeRuleOutputSlotsClient_(slots) {
+        var out = [];
+        if (!Array.isArray(slots)) return out;
+        for (var i = 0; i < slots.length && out.length < 3; i++) {
+          var s = slots[i];
+          if (!s || typeof s !== 'object') continue;
+          var target = String(s.target == null ? '' : s.target).trim();
+          var col = String(s.col == null ? '' : s.col).trim().toUpperCase();
+          var header = String(s.header == null ? '' : s.header).trim();
+          var enabled = !!s.enabled;
+          if (!target && !col && !enabled && !header) continue;
+          out.push({ target: target, col: col, enabled: enabled, header: header });
+        }
+        return out;
+      }
+
+      function normalizeTargetName_(v) {
+        var s = String(v == null ? '' : v).trim();
+        // 空は既定名へ（後方互換・入力漏れ対策）
+        return s || '講評・改善点';
+      }
+
+      function extractTargetsFromRules_(rules, headers) {
+        if (!Array.isArray(rules) || !Array.isArray(headers)) return [];
+        var targetKey = findHeaderKey_(headers, ['target', 'dest', 'group', 'outputtarget']);
+        if (!targetKey) return [];
+        var out = [];
+        var seen = {};
+        for (var i = 0; i < rules.length; i++) {
+          var r = rules[i];
+          if (!r || typeof r !== 'object') continue;
+          var t = normalizeTargetName_(r[targetKey]);
+          if (!t) continue;
+          if (seen[t]) continue;
+          seen[t] = true;
+          out.push(t);
+          if (out.length >= 3) break;
+        }
+        return out;
+      }
+
+      function resolveRuleOutputSlots_(config, rules, headers) {
+        var cfg = config || {};
+        var saved = normalizeRuleOutputSlotsClient_(cfg.ruleOutputSlots);
+
+        // ルールからtarget一覧を抽出（priority順のまま）
+        var targets = extractTargetsFromRules_(rules, headers);
+
+        // まず saved を target→slot で引けるようにする
+        var byTarget = {};
+        saved.forEach(function (s) {
+          if (s && s.target) byTarget[s.target] = s;
+        });
+
+        var out = [];
+        if (targets && targets.length) {
+          for (var i = 0; i < targets.length && out.length < 3; i++) {
+            var t = targets[i];
+            var ss = byTarget[t];
+            out.push({
+              target: t,
+              col: ss ? (ss.col || '') : '',
+              header: ss ? (ss.header || '') : '',
+              enabled: ss ? !!ss.enabled : false
+            });
+          }
+        } else if (saved.length) {
+          // ルール未ロード/target無しでも、保存済みがあればそれを表示（設定画面を壊さない）
+          out = saved.slice(0, 3).map(function (s) {
+            return { target: normalizeTargetName_(s.target), col: s.col || '', header: s.header || '', enabled: !!s.enabled };
+          });
+        } else {
+          // 完全初期
+          out.push({
+            target: '講評・改善点',
+            col: cfg.commentCol ? String(cfg.commentCol).trim().toUpperCase() : '',
+            header: cfg.commentHeader ? String(cfg.commentHeader).trim() : '',
+            enabled: true
+          });
+        }
+
+        if (!out.length) {
+          out.push({ target: '講評・改善点', col: cfg.commentCol ? String(cfg.commentCol).trim().toUpperCase() : '', header: cfg.commentHeader ? String(cfg.commentHeader).trim() : '', enabled: true });
+        }
+        if (cfg.commentCol && !out[0].col) {
+          out[0].col = String(cfg.commentCol).trim().toUpperCase();
+        }
+        if (cfg.commentHeader && !out[0].header) {
+          out[0].header = String(cfg.commentHeader).trim();
+        }
+        while (out.length < 3) out.push({ target: '', col: '', header: '', enabled: false });
+        if (out.length > 3) out = out.slice(0, 3);
+        return out;
+      }
+
+      function applyRuleOutputSlotsToUI_(slots) {
+        state.ruleOutputSlotsResolved = Array.isArray(slots) ? slots.slice(0, 3) : null;
+
+        // 採点画面（講評/改善点）
+        for (var i = 0; i < 3; i++) {
+          var s = slots && slots[i] ? slots[i] : null;
+          var label = s && s.target ? s.target : '（未使用）';
+          if (els.ruleOutLabels && els.ruleOutLabels[i]) {
+            els.ruleOutLabels[i].textContent = label;
+          }
+          if (els.ruleOutRows && els.ruleOutRows[i]) {
+            // enabled のときだけ表示（枠1固定を撤廃）
+            els.ruleOutRows[i].style.display = (s && s.enabled) ? '' : 'none';
+          }
+          if (els.ruleOutInputs && els.ruleOutInputs[i]) {
+            var enableEdit = !!(s && s.enabled);
+            els.ruleOutInputs[i].disabled = !enableEdit;
+            els.ruleOutInputs[i].style.backgroundColor = enableEdit ? '#fff' : '#f3f3f3';
+          }
+        }
+
+        // 設定画面（列/編集有効化）
+        for (var j = 0; j < 3; j++) {
+          var ss = slots && slots[j] ? slots[j] : null;
+          var t = ss && ss.target ? ss.target : '';
+          if (els.ruleOutNameEls && els.ruleOutNameEls[j]) {
+            els.ruleOutNameEls[j].textContent = t ? t : '（未使用）';
+          }
+          if (els.ruleOutColInputs && els.ruleOutColInputs[j]) {
+            var label = ss && ss.header ? ss.header : getHeaderLabelByCol_(ss && ss.col ? ss.col : '');
+            setSelectOptions_(els.ruleOutColInputs[j], label || '');
+            // 未使用枠はグレーアウト
+            var usable = !!t;
+            els.ruleOutColInputs[j].disabled = !usable;
+            els.ruleOutColInputs[j].style.backgroundColor = usable ? '#fff' : '#f3f3f3';
+          }
+          if (els.ruleOutEnableInputs && els.ruleOutEnableInputs[j]) {
+            els.ruleOutEnableInputs[j].checked = !!(ss && ss.enabled);
+            els.ruleOutEnableInputs[j].disabled = !t;
+          }
+        }
+      }
+
+      // UI入力値をそのまま返す（注意: colChecksは評価に使わない）
+      function buildScoresForCalc_() {
+        return els.scoreInputs.map(function (el) {
+          return el.value;
+        });
+      }
+
+      /**
+       * ローカルでルールを評価してマッチしたルールを返す
+       * ネットワーク通信なしで即座に評価を行う
+       * 
+       * @param {Array} rules - ルール配列（優先度順にソート済み）
+       * @param {Array} headers - ヘッダー配列（キー名の解決用）
+       * @param {Object} evalVars - 評価用変数辞書
+       * @return {{matched:boolean, rule:Object|null, rowNumber:number|null, error:string|null}}
+       */
+      function evaluateRulesLocally_(rules, headers, evalVars) {
+        if (!Array.isArray(rules) || rules.length === 0) {
+          return { matched: false, rule: null, rowNumber: null, error: null };
+        }
+        if (!Array.isArray(headers)) {
+          return { matched: false, rule: null, rowNumber: null, error: 'ヘッダー情報がありません' };
+        }
+
+        // ヘッダー名を取得
+        var whenKey = findHeaderKey_(headers, ['whenexpr', 'when', 'expr', 'condition', 'if']);
+        var textKey = findHeaderKey_(headers, ['text', 'output', 'result', 'comment', 'message']);
+        var enabledKey = findHeaderKey_(headers, ['enabled', 'enable', 'active', 'isenabled', 'isactive']);
+
+        if (!whenKey) {
+          return { matched: false, rule: null, rowNumber: null, error: 'whenExpr列が見つかりません' };
+        }
+        if (!textKey) {
+          return { matched: false, rule: null, rowNumber: null, error: 'text列が見つかりません' };
+        }
+
+        // ルール配列を優先度順に走査（既にソート済み）
+        for (var i = 0; i < rules.length; i++) {
+          var rule = rules[i];
+          if (!rule || typeof rule !== 'object') continue;
+
+          // enabled チェック
+          if (enabledKey) {
+            var enabled = rule[enabledKey];
+            if (!isEnabled_(enabled)) {
+              continue; // 無効なルールはスキップ
+            }
+          }
+
+          // whenExpr を評価
+          var whenExpr = rule[whenKey];
+          if (!whenExpr || typeof whenExpr !== 'string') {
+            whenExpr = String(whenExpr || '').trim();
+          }
+          
+          // 空のwhenExprは常にtrue
+          if (!whenExpr) {
+            var text = rule[textKey];
+            var rowNumber = rule._rowNumber || null;
+            return {
+              matched: true,
+              rule: rule,
+              rowNumber: rowNumber,
+              error: null
+            };
+          }
+
+          // whenExprを評価
+          var evalResult = evaluateWhenExprSafe(whenExpr, evalVars);
+          if (!evalResult.ok) {
+            // 評価エラーはスキップ（ログに残す可能性あり）
+            continue;
+          }
+
+          if (evalResult.result === true) {
+            // マッチしたルールを返す
+            var text = rule[textKey];
+            var rowNumber = rule._rowNumber || null;
+            return {
+              matched: true,
+              rule: rule,
+              rowNumber: rowNumber,
+              error: null
+            };
+          }
+        }
+
+        // マッチなし
+        return { matched: false, rule: null, rowNumber: null, error: null };
+      }
+
+      /**
+       * ローカルでルールを「targetごと」に評価して、最大3枠分の出力を返す
+       * - priority順に走査し、各targetで最初にマッチした1件を採用
+       * - target列がない/空の場合は既定のtarget（講評・改善点）扱い
+       *
+       * @param {Array} rules
+       * @param {Array} headers
+       * @param {Object} evalVars
+       * @param {Array<{target:string,col?:string,enabled?:boolean}>} slotsResolved - 表示枠（最大3）
+       * @return {{outputs:string[], matchedRowNumberForSlot1:number|null, error:string|null}}
+       */
+      function evaluateRulesLocallyMulti_(rules, headers, evalVars, slotsResolved) {
+        var slots = Array.isArray(slotsResolved) ? slotsResolved : [];
+        var out = ['', '', ''];
+        if (!Array.isArray(rules) || !rules.length || !Array.isArray(headers)) {
+          return { outputs: out, matchedRowNumberForSlot1: null, error: null };
+        }
+
+        var whenKey = findHeaderKey_(headers, ['whenexpr', 'when', 'expr', 'condition', 'if']);
+        var textKey = findHeaderKey_(headers, ['text', 'output', 'result', 'comment', 'message']);
+        var enabledKey = findHeaderKey_(headers, ['enabled', 'enable', 'active', 'isenabled', 'isactive']);
+        var targetKey = findHeaderKey_(headers, ['target', 'dest', 'group', 'outputtarget']);
+
+        if (!whenKey) return { outputs: out, matchedRowNumberForSlot1: null, error: 'whenExpr列が見つかりません' };
+        if (!textKey) return { outputs: out, matchedRowNumberForSlot1: null, error: 'text列が見つかりません' };
+
+        // target→text（最初のマッチのみ）
+        var matchedByTarget = {};
+        var rowByTarget = {};
+
+        for (var i = 0; i < rules.length; i++) {
+          var rule = rules[i];
+          if (!rule || typeof rule !== 'object') continue;
+
+          if (enabledKey) {
+            var en = rule[enabledKey];
+            if (!isEnabled_(en)) continue;
+          }
+
+          var whenExpr = rule[whenKey];
+          if (!whenExpr || typeof whenExpr !== 'string') whenExpr = String(whenExpr || '').trim();
+
+          var isMatch = false;
+          if (!whenExpr) {
+            isMatch = true;
+          } else {
+            var evalResult = evaluateWhenExprSafe(whenExpr, evalVars);
+            if (!evalResult.ok) continue;
+            isMatch = (evalResult.result === true);
+          }
+          if (!isMatch) continue;
+
+          var tName = targetKey ? normalizeTargetName_(rule[targetKey]) : '講評・改善点';
+          if (matchedByTarget.hasOwnProperty(tName)) continue; // 既に埋まっているtargetはスキップ
+
+          var text = rule[textKey];
+          matchedByTarget[tName] = (text === null || text === undefined) ? '' : String(text).trim();
+          rowByTarget[tName] = rule._rowNumber || null;
+        }
+
+        // slotsResolved の順に詰める
+        for (var s = 0; s < 3; s++) {
+          var slot = slots[s];
+          if (!slot || !slot.target) continue;
+          var tt = normalizeTargetName_(slot.target);
+          out[s] = matchedByTarget[tt] || '';
+        }
+
+        var slot1Target = slots[0] && slots[0].target ? normalizeTargetName_(slots[0].target) : '講評・改善点';
+        var matchedRowNumberForSlot1 = rowByTarget.hasOwnProperty(slot1Target) ? rowByTarget[slot1Target] : null;
+        return { outputs: out, matchedRowNumberForSlot1: matchedRowNumberForSlot1, error: null };
+      }
+
+      /**
+       * 【テンプレ反映フロー：入力→反映の経路図】
+       * 
+       * 【入力イベント】→【handleScoresChanged()】→【ローカル評価】→【講評反映】
+       * 
+       * 入力イベント（呼び出し元）:
+       * 1. スコア入力欄の 'input' イベント (1107行目)
+       *    → els.scoreInputs[idx].addEventListener('input', ...)
+       *    → markDirty() → handleScoresChanged()
+       * 
+       * 2. 再評価ボタンクリック (1179行目)
+       *    → els.reapplyRulesBtn.addEventListener('click', ...)
+       *    → handleScoresChanged()
+       * 
+       * 3. 講評欄で Ctrl+Enter (1451行目)
+       *    → handleKeydown() → handleScoresChanged()
+       * 
+       * 4. スコア欄で Ctrl+Enter (1524行目)
+       *    → handleKeydown() → handleScoresChanged()
+       * 
+       * 5. スコア欄で数字キー入力 (1544行目)
+       *    → handleKeydown() → markDirty() → handleScoresChanged()
+       * 
+       * 処理フロー:
+       * 1. buildScoresForCalc_() → UI入力値（els.scoreInputs）を取得
+       * 2. buildRuleVars_(scores) → varsオブジェクト構築（score1..score5）
+       * 3. buildEvalVars(vars) → evalVarsオブジェクト構築
+       * 4. デバウンス処理（200ms）で連続入力をまとめる
+       * 5. evaluateRulesLocally_() → ローカルでルール評価（state.currentRules を使用）
+       * 6. マッチ時: applyAutoRuleOutputs_(...) → 講評/改善点入力欄（最大3）に反映
+       * 7. マッチなし時: マッチ情報をクリア
+       * 
+       * 【性能改善】
+       * - ネットワーク通信なし（apiApplyRules を呼ばない）
+       * - 反映遅延が体感で大幅に改善（入力後200ms以内に反映）
+       * 
+       * 反映先DOM要素:
+       * - els.ruleOutInputs (id="ruleOutInput1..3") → 講評/改善点入力欄（最大3）
+       * - state.autoRuleOutputs / state.autoComment → 自動生成された講評（状態保持）
+       * - state.lastMatchedRule → マッチしたルール情報（ハイライト用）
+       * 
+       * 更新関数:
+       * - applyAutoComment_(text) → 講評欄にテキストを反映
+       * - updateRulesSummaryHighlight_(templateId) → ルール一覧のハイライト更新
+       */
+      function handleScoresChanged() {
+        if (!state.config) return;
+
+        var scores = buildScoresForCalc_();
+        // 生値の vars を構築（表示/保存用）
+        var vars = buildRuleVars_(scores);
+        // 評価用の evalVars を構築
+        var evalVars = buildEvalVars(vars);
+
+        // requestId（最新だけ反映）
+        state.commentReqId = (state.commentReqId || 0) + 1;
+        var reqId = state.commentReqId;
+
+        function applyAutoRuleOutputs_(outputs) {
+          if (reqId !== state.commentReqId) return; // 古い応答を捨てる
+          var out = Array.isArray(outputs) ? outputs : [];
+          while (out.length < 3) out.push('');
+          if (out.length > 3) out = out.slice(0, 3);
+          state.autoRuleOutputs = out.slice(0, 3);
+          state.autoComment = (out[0] === null || out[0] === undefined) ? '' : String(out[0]);
+          (els.ruleOutInputs || []).forEach(function (el, idx) {
+            if (!el) return;
+            var v = out[idx];
+            el.value = (v === null || v === undefined) ? '' : String(v);
+          });
+        }
+
+        var templateId = (state.config && state.config.ruleTemplateId) ? String(state.config.ruleTemplateId).trim() : 'default';
+        if (!templateId) {
+          // テンプレ未設定時はクリア
+          state.lastMatchedRule = { templateId: '', matchedRowNumber: null };
+          applyAutoRuleOutputs_(['', '', '']);
+          return;
+        }
+
+        // ★同一内容の連打を抑止（evalVars を使用）
+        var applyKey = templateId + '|' + JSON.stringify(evalVars);
+        state.lastApplyRulesKey = applyKey;
+
+        // ★デバウンス：短時間の連続入力をまとめる
+        if (state.applyRulesDebounceTimer) {
+          clearTimeout(state.applyRulesDebounceTimer);
+        }
+        state.applyRulesDebounceTimer = setTimeout(function () {
+          // 最新キーと違うなら捨てる
+          if (state.lastApplyRulesKey !== applyKey) return;
+
+          // ローカルでルール評価（通信ゼロ、即座に反映）
+          var rules = state.currentRules;
+          var headers = state.currentRulesHeaders;
+
+          // ルールが未ロードの場合は何もしない
+          if (!rules || !Array.isArray(rules) || rules.length === 0) {
+            // ルール未ロード時はマッチ情報をクリア
+            state.lastMatchedRule = { templateId: '', matchedRowNumber: null };
+            var currentTemplateId = (state.config && state.config.ruleTemplateId) ? String(state.config.ruleTemplateId).trim() : '';
+            if (currentTemplateId === templateId) {
+              updateRulesSummaryHighlight_(currentTemplateId);
+            }
+            applyAutoRuleOutputs_(['', '', '']);
+            return;
+          }
+
+          // 出力枠を解決（テンプレ切替や設定変更でズレないようにする）
+          var slots = state.ruleOutputSlotsResolved || resolveRuleOutputSlots_(state.config || {}, rules, headers);
+          if (!state.ruleOutputSlotsResolved) {
+            applyRuleOutputSlotsToUI_(slots);
+          }
+
+          // ローカル評価（targetごと）を実行
+          var result2 = evaluateRulesLocallyMulti_(rules, headers, evalVars, slots);
+
+          // ハイライト（slot1のマッチ行のみ）
+          if (result2 && result2.matchedRowNumberForSlot1 != null) {
+            state.lastMatchedRule = { templateId: templateId, matchedRowNumber: result2.matchedRowNumberForSlot1 };
+          } else {
+            state.lastMatchedRule = { templateId: '', matchedRowNumber: null };
+          }
+          var currentTemplateId2 = (state.config && state.config.ruleTemplateId) ? String(state.config.ruleTemplateId).trim() : '';
+          if (currentTemplateId2 === templateId) {
+            updateRulesSummaryHighlight_(currentTemplateId2);
+          }
+
+          // 講評/改善点の適用
+          applyAutoRuleOutputs_((result2 && Array.isArray(result2.outputs)) ? result2.outputs : ['', '', '']);
+        }, 200);
+      }
+
+      // 指定した枠だけ再評価して反映（他の枠は上書きしない）
+      function reapplyRuleOutputSlot_(slotIndex) {
+        if (!state.config) return;
+        var idx = Number(slotIndex);
+        if (!isFinite(idx) || idx < 0 || idx > 2) return;
+
+        var scores = buildScoresForCalc_();
+        var vars = buildRuleVars_(scores);
+        var evalVars = buildEvalVars(vars);
+        var templateId = (state.config && state.config.ruleTemplateId) ? String(state.config.ruleTemplateId).trim() : '';
+        if (!templateId) return;
+
+        var rules = state.currentRules;
+        var headers = state.currentRulesHeaders;
+        if (!rules || !Array.isArray(rules) || rules.length === 0) return;
+
+        var slots = state.ruleOutputSlotsResolved || resolveRuleOutputSlots_(state.config || {}, rules, headers);
+        if (!state.ruleOutputSlotsResolved) {
+          applyRuleOutputSlotsToUI_(slots);
+        }
+
+        var result = evaluateRulesLocallyMulti_(rules, headers, evalVars, slots);
+        var output = '';
+        if (result && Array.isArray(result.outputs)) {
+          var ov = result.outputs[idx];
+          output = (ov === null || ov === undefined) ? '' : String(ov);
+        }
+
+        // 反映（枠だけ）
+        if (els.ruleOutInputs && els.ruleOutInputs[idx]) {
+          els.ruleOutInputs[idx].value = output;
+        }
+        state.autoRuleOutputs = state.autoRuleOutputs || ['', '', ''];
+        state.autoRuleOutputs[idx] = output;
+        if (idx === 0) {
+          state.autoComment = output;
+        }
+        markDirty();
+      }
+
+      function renderCurrentRow() {
+        // 行切替時に古い講評リクエストの応答を無効化
+        state.commentReqId = (state.commentReqId || 0) + 1;
+
+        if (!state.rows.length) {
+          els.studentName.textContent = '生徒名：-';
+          els.rowIndex.textContent = '-';
+          if (els.headerRowIndex) els.headerRowIndex.textContent = '-';
+          els.answers.innerHTML = '';
+          els.scoreInputs.forEach(function (el) { el.value = ''; });
+          (els.ruleOutInputs || []).forEach(function (el) { if (el) el.value = ''; });
+          state.autoRuleOutputs = ['', '', ''];
+          state.autoComment = '';
+          clearDirty();
+          return;
+        }
+        var row = state.rows[state.currentIndex];
+        var nameText = (row && row.name !== null && row.name !== undefined) ? String(row.name) : '';
+        els.studentName.textContent = nameText !== '' ? ('生徒名：' + nameText) : '生徒名：-';
+        els.rowIndex.textContent = String(row.rowNumber);
+        if (els.headerRowIndex) {
+          var hr = Number(state && state.headerRow);
+          if (!isFinite(hr) || hr < 1) hr = (state.config && state.config.headerRow) ? Number(state.config.headerRow) : 1;
+          if (!isFinite(hr) || hr < 1) hr = 1;
+          els.headerRowIndex.textContent = String(hr);
+        }
+
+        // 上段（回答）
+        els.answers.innerHTML = '';
+        var headers = state.headers || [];
+        // DocumentFragment で一括挿入（環境によっては逐次appendで再描画が遅れることがある）
+        var frag = document.createDocumentFragment();
+        row.displays.forEach(function (text, idx) {
+          // 0 / false を空扱いにしない（null/undefinedのみ空）
+          var textStr = (text === null || text === undefined) ? '' : String(text);
+          var colInfo = headers[idx];
+          var colLabel = colInfo ? colInfo.col : '';
+          var head = colInfo ? (colInfo.header || '') : '';
+          var details = document.createElement('details');
+          // 初期表示で折りたたまずに表示（必要ならユーザが折りたためる）
+          details.open = true;
+          var summary = document.createElement('summary');
+          var spanTag = document.createElement('span');
+          spanTag.className = 'qtag';
+          spanTag.textContent = colLabel || ('Q' + (idx + 1));
+          var spanHead = document.createElement('span');
+          spanHead.textContent = head;
+          var spanCount = document.createElement('span');
+          spanCount.className = 'qcount';
+          spanCount.textContent = '(' + countCharsNoWhitespace_(textStr) + '字)';
+          summary.appendChild(spanTag);
+          summary.appendChild(spanHead);
+          summary.appendChild(spanCount);
+          var body = document.createElement('div');
+          body.className = 'answer-body';
+          body.textContent = textStr;
+          details.appendChild(summary);
+          details.appendChild(body);
+          frag.appendChild(details);
+        });
+        els.answers.appendChild(frag);
+        // 描画後にスクロール位置を確定（初期表示のズレを防ぐ）
+        try { els.answers.scrollTop = 0; } catch (e) {}
+        if (typeof requestAnimationFrame === 'function') {
+          requestAnimationFrame(function () {
+            try { els.answers.scrollTop = 0; } catch (e) {}
+          });
+        }
+
+        // サーバ値＋ローカル差分をマージ（表示対象行に最新値を反映）
+        // 移動した瞬間に「入力した値が消えない」ように、常に最新の状態を表示
+        var sheetName = state.currentSheet || state.config.sheetName;
+        var pendingEdit = loadPendingEditFromLocalStorage(sheetName, row.rowNumber);
+        
+        // サーバ値（row）をベースに、ローカル差分（pendingEdit）があれば上書き
+        var displayScores = (row.scores || []).slice(); // サーバ値のコピー
+        // 講評（最大3）
+        var displayRuleOutputs = Array.isArray(row.ruleOutputs) ? row.ruleOutputs.slice() : [];
+        if (!displayRuleOutputs.length) {
+          // 後方互換: row.comment のみの場合
+          displayRuleOutputs = [row.comment || ''];
+        }
+        while (displayRuleOutputs.length < 3) displayRuleOutputs.push('');
+        var displayComment = displayRuleOutputs[0] || '';
+        
+        if (pendingEdit) {
+          // ローカル差分があれば上書き（マージ）
+          // スコアの差分: ローカル差分があればそのまま使用（空文字も含む）
+          if (pendingEdit.scores && Array.isArray(pendingEdit.scores)) {
+            // displayScoresの長さをローカル差分の長さに合わせる
+            while (displayScores.length < pendingEdit.scores.length) {
+              displayScores.push('');
+            }
+            // ローカル差分の値を反映
+            for (var i = 0; i < pendingEdit.scores.length; i++) {
+              if (pendingEdit.scores[i] !== undefined && pendingEdit.scores[i] !== null) {
+                displayScores[i] = String(pendingEdit.scores[i]);
+              }
+            }
+          }
+          // 講評（最大3）の差分: ローカル差分があればそのまま使用（空文字も含む）
+          if (pendingEdit.ruleOutputs && Array.isArray(pendingEdit.ruleOutputs)) {
+            for (var ri = 0; ri < pendingEdit.ruleOutputs.length && ri < 3; ri++) {
+              if (pendingEdit.ruleOutputs[ri] !== undefined && pendingEdit.ruleOutputs[ri] !== null) {
+                displayRuleOutputs[ri] = String(pendingEdit.ruleOutputs[ri]);
+              }
+            }
+          } else if (pendingEdit.comment !== undefined && pendingEdit.comment !== null) {
+            // 旧形式（commentのみ）
+            displayRuleOutputs[0] = String(pendingEdit.comment);
+          }
+          displayComment = displayRuleOutputs[0] || '';
+        }
+        
+        // マージ後の値をrowオブジェクトに反映（見た目は常に最新）
+        row.scores = displayScores;
+        row.ruleOutputs = displayRuleOutputs;
+        row.comment = displayComment; // 後方互換（slot1）
+        
+        // UIに表示
+        els.scoreInputs.forEach(function (el, idx) {
+          var v = displayScores[idx];
+          el.value = (v === null || v === undefined) ? '' : String(v);
+        });
+        
+        // 講評/改善点（最大3）をUIに反映
+        (els.ruleOutInputs || []).forEach(function (el, idx) {
+          if (!el) return;
+          var v = displayRuleOutputs[idx];
+          el.value = (v === null || v === undefined) ? '' : String(v);
+        });
+        state.autoRuleOutputs = displayRuleOutputs.slice(0, 3);
+        state.autoComment = displayComment;
+        
+        // localStorageに差分があれば「ローカル保存済み（未送信）」、なければ「保存済み」
+        if (pendingEdit) {
+          state.dirty = true;
+          setStatus('ローカル保存済み（未送信）', 'local');
+        } else {
+          state.dirty = false;
+          setStatus('保存済み', 'ok');
+        }
+        // 左端の未チェック採点枠へフォーカス
+        var firstUnchecked = findFirstUncheckedScoreIndex();
+        if (firstUnchecked >= 0) {
+          focusScoreInput(firstUnchecked);
+        }
+      }
+
+      // localStorageのキー設計（衝突・シート違い対策）
+      // スプレッドシートIDを取得（configから取得、なければフォールバック）
+      function getSpreadsheetId() {
+        if (state.config && state.config.spreadsheetId) {
+          return String(state.config.spreadsheetId);
+        }
+        // フォールバック: URLから抽出を試みる（将来的にURLが使える場合）
+        // 現時点では空文字列または'unknown'を使用
+        return 'unknown';
+      }
+
+      // キー生成: `gradingDraft:{spreadsheetId}:{sheetName}`
+      // シート/スプシが変わったら差分が混ざらないようにする
+      function getDraftKey(spreadsheetId, sheetName) {
+        var id = String(spreadsheetId || '').trim() || 'unknown';
+        var sheet = String(sheetName || '').trim() || 'unknown';
+        return 'gradingDraft:' + id + ':' + sheet;
+      }
+
+      // localStorageに差分を保存（辞書形式: 行番号をキーにした辞書）
+      // 後方互換:
+      // - 旧: comment(string) のみ
+      // - 新: ruleOutputs(Array<string>) を併用（commentはslot1）
+      function savePendingEditToLocalStorage(sheetName, rowNumber, scores, comment, ruleOutputs) {
+        try {
+          var spreadsheetId = getSpreadsheetId();
+          var key = getDraftKey(spreadsheetId, sheetName);
+          var rowKey = String(rowNumber || '');
+          
+          // 既存のデータを読み込む
+          var draftData = {};
+          try {
+            var existingData = localStorage.getItem(key);
+            if (existingData) {
+              draftData = JSON.parse(existingData);
+            }
+          } catch (err) {
+            console.warn('既存データの読み込みエラー（新規作成）:', err);
+          }
+          
+          // comment / ruleOutputs を正規化
+          var ro = [];
+          if (Array.isArray(ruleOutputs)) {
+            ro = ruleOutputs.map(function (v) { return v == null ? '' : String(v); });
+          } else {
+            ro = [];
+          }
+          while (ro.length < 3) ro.push('');
+          if (ro.length > 3) ro = ro.slice(0, 3);
+          var c = (comment != null) ? String(comment) : (ro[0] || '');
+
+          // 該当行のデータを更新
+          draftData[rowKey] = {
+            scores: scores.slice ? scores.slice() : scores,
+            comment: c || '',
+            ruleOutputs: ro,
+            updatedAt: Date.now()
+          };
+          
+          // localStorageに保存
+          localStorage.setItem(key, JSON.stringify(draftData));
+          
+          // state.pendingEditsにも反映
+          var stateKey = spreadsheetId + ':' + (sheetName || '') + ':' + rowKey;
+          state.pendingEdits[stateKey] = {
+            spreadsheetId: spreadsheetId,
+            sheetName: sheetName,
+            rowNumber: rowNumber,
+            scores: draftData[rowKey].scores,
+            comment: draftData[rowKey].comment,
+            ruleOutputs: draftData[rowKey].ruleOutputs,
+            updatedAt: draftData[rowKey].updatedAt
+          };
+          
+          return true;
+        } catch (err) {
+          console.error('localStorage保存エラー:', err);
+          return false;
+        }
+      }
+
+      // localStorageから差分を読み込む（辞書形式から特定行を取得）
+      function loadPendingEditFromLocalStorage(sheetName, rowNumber) {
+        try {
+          var spreadsheetId = getSpreadsheetId();
+          var key = getDraftKey(spreadsheetId, sheetName);
+          var rowKey = String(rowNumber || '');
+          
+          var data = localStorage.getItem(key);
+          if (!data) return null;
+          
+          var draftData = JSON.parse(data);
+          if (!draftData || typeof draftData !== 'object' || !draftData[rowKey]) {
+            return null;
+          }
+          
+          var rowData = draftData[rowKey];
+          var ro = [];
+          if (rowData && Array.isArray(rowData.ruleOutputs)) {
+            ro = rowData.ruleOutputs.map(function (v) { return v == null ? '' : String(v); });
+          } else {
+            // 旧形式（commentのみ）
+            ro = [rowData && rowData.comment != null ? String(rowData.comment) : ''];
+          }
+          while (ro.length < 3) ro.push('');
+          if (ro.length > 3) ro = ro.slice(0, 3);
+          var c = (rowData && rowData.comment != null) ? String(rowData.comment) : (ro[0] || '');
+          return {
+            scores: rowData.scores || [],
+            comment: c || '',
+            ruleOutputs: ro,
+            updatedAt: rowData.updatedAt || 0
+          };
+        } catch (err) {
+          console.error('localStorage読み込みエラー:', err);
+          return null;
+        }
+      }
+
+      // localStorageから差分を削除（辞書形式から特定行を削除、辞書が空になったらキーごと削除）
+      function removePendingEditFromLocalStorage(sheetName, rowNumber) {
+        try {
+          var spreadsheetId = getSpreadsheetId();
+          var key = getDraftKey(spreadsheetId, sheetName);
+          var rowKey = String(rowNumber || '');
+          
+          // 既存のデータを読み込む
+          var draftData = {};
+          try {
+            var existingData = localStorage.getItem(key);
+            if (existingData) {
+              draftData = JSON.parse(existingData);
+            }
+          } catch (err) {
+            // データがなければ削除済みとみなす
+            return true;
+          }
+          
+          // 該当行を削除
+          if (draftData[rowKey]) {
+            delete draftData[rowKey];
+            
+            // 辞書が空になったらキーごと削除、そうでなければ更新
+            if (Object.keys(draftData).length === 0) {
+              localStorage.removeItem(key);
+            } else {
+              localStorage.setItem(key, JSON.stringify(draftData));
+            }
+          }
+          
+          // state.pendingEditsからも削除
+          var stateKey = spreadsheetId + ':' + (sheetName || '') + ':' + rowKey;
+          delete state.pendingEdits[stateKey];
+          
+          return true;
+        } catch (err) {
+          console.error('localStorage削除エラー:', err);
+          return false;
+        }
+      }
+
+      // localStorageに差分を保存（GAS送信しない）
+      // 入力中の体感速度を上げつつ、落ちても復旧できるようにブラウザに差分をためる
+      function readRuleOutputsFromUI_() {
+        var out = ['', '', ''];
+        if (!els.ruleOutInputs || !els.ruleOutInputs.length) return out;
+        for (var i = 0; i < 3; i++) {
+          var el = els.ruleOutInputs[i];
+          out[i] = el ? String(el.value || '') : '';
+        }
+        return out;
+      }
+
+      function saveCurrentRow(callback) {
+        if (!state.rows.length) {
+          if (callback) callback(false);
+          return;
+        }
+        var row = state.rows[state.currentIndex];
+        // 無効化された枠は空文字を送る（サーバ側が書き込みスキップできるように）
+        var scores = buildScoresForCalc_();
+        var sheetName = state.currentSheet || state.config.sheetName;
+        var ruleOutputs = readRuleOutputsFromUI_();
+        var comment = ruleOutputs[0] || '';
+        
+        // localStorageに差分を保存
+        var saved = savePendingEditToLocalStorage(sheetName, row.rowNumber, scores, comment, ruleOutputs);
+        if (saved) {
+          // ローカル状態も更新
+          row.scores = scores.slice();
+          row.ruleOutputs = ruleOutputs.slice(0, 3);
+          row.comment = comment; // 後方互換（slot1）
+          // localStorage保存後は「ローカル保存済み（未送信）」状態
+          markDirty();
+          if (callback) callback(true);
+        } else {
+          setStatus('ローカル保存エラー', 'error');
+          if (callback) callback(false);
+        }
+      }
+
+      // 自動フラッシュのタイマー管理（入力が1分止まったら自動送信）
+      // 操作を邪魔しない範囲で安全性を上げる
+      function resetAutoFlushTimer() {
+        // 既存のタイマーをクリア
+        if (state.autoFlushTimer) {
+          clearTimeout(state.autoFlushTimer);
+          state.autoFlushTimer = null;
+        }
+        
+        // 送信中や差分がない場合はタイマーを設定しない
+        if (state.saving) return;
+        
+        var spreadsheetId = getSpreadsheetId();
+        var sheetName = state.currentSheet || state.config.sheetName;
+        if (!sheetName) return;
+        
+        var key = getDraftKey(spreadsheetId, sheetName);
+        try {
+          var data = localStorage.getItem(key);
+          if (!data) return; // 差分がない
+          
+          var draftData = JSON.parse(data);
+          if (!draftData || typeof draftData !== 'object' || Object.keys(draftData).length === 0) {
+            return; // 差分がない
+          }
+        } catch (err) {
+          return; // エラーの場合はタイマーを設定しない
+        }
+        
+        // 1分（60000ミリ秒）後に自動フラッシュを実行
+        state.autoFlushTimer = setTimeout(function () {
+          state.autoFlushTimer = null;
+          // 自動フラッシュ実行（送信中でないことを再確認）
+          if (!state.saving) {
+            flushPendingEdits(true); // 自動実行フラグを渡す
+          }
+        }, 60000); // 1分
+      }
+
+      // 自動フラッシュのタイマーをクリア
+      function clearAutoFlushTimer() {
+        if (state.autoFlushTimer) {
+          clearTimeout(state.autoFlushTimer);
+          state.autoFlushTimer = null;
+        }
+      }
+
+      // まとめて保存（localStorageの差分を全件GASへ送信）
+      // 任意タイミングでGASへ一括反映できるようにする
+      function flushPendingEdits(isAuto) {
+        if (!state.config || !state.currentSheet) {
+          setStatus('エラー: シートが選択されていません', 'error');
+          return;
+        }
+
+        // 送信後に同じ行へ戻すため、現在行番号を保持
+        var currentRowNumber = (state.rows && state.rows.length && state.rows[state.currentIndex])
+          ? state.rows[state.currentIndex].rowNumber
+          : null;
+
+        // ★重要：現在行の編集内容を送信対象（localStorage）へ確実に退避
+        if (state.rows && state.rows.length) {
+          saveCurrentRow(); // localStorage保存は同期処理
+        }
+
+        var spreadsheetId = getSpreadsheetId();
+        var sheetName = state.currentSheet || state.config.sheetName;
+        var key = getDraftKey(spreadsheetId, sheetName);
+
+        // localStorageから差分を取得
+        var draftData = null;
+        try {
+          var data = localStorage.getItem(key);
+          if (!data) {
+            setStatus('保存済み（送信する差分なし）', 'ok');
+            return;
+          }
+          draftData = JSON.parse(data);
+        } catch (err) {
+          console.error('localStorage読み込みエラー:', err);
+          setStatus('エラー: 差分データの読み込みに失敗しました', 'error');
+          return;
+        }
+
+        if (!draftData || typeof draftData !== 'object' || Object.keys(draftData).length === 0) {
+          setStatus('保存済み（送信する差分なし）', 'ok');
+          return;
+        }
+
+        // 行番号順にソート
+        var rowNumbers = Object.keys(draftData).map(function (k) {
+          return parseInt(k, 10) || 0;
+        }).filter(function (n) {
+          return n > 0;
+        }).sort(function (a, b) {
+          return a - b;
+        });
+
+        if (rowNumbers.length === 0) {
+          setStatus('保存済み（送信する差分なし）', 'ok');
+          return;
+        }
+
+        // 送信中状態を設定（自動フラッシュを防ぐ）
+        state.saving = true;
+        clearAutoFlushTimer(); // 送信開始時にタイマーをクリア
+
+        // 送信中状態を表示
+        if (isAuto) {
+          setStatus('自動保存中...', 'sending');
+        } else {
+          setSendingStatus();
+        }
+        if (els.navFlush) {
+          els.navFlush.disabled = true;
+          els.navFlush.textContent = '送信中...';
+        }
+
+        var totalCount = rowNumbers.length;
+        var successCount = 0;
+        var errorCount = 0;
+
+        // 連続行を最大20件までのチャンクに分割
+        function buildRowChunks_(rows, maxChunk) {
+          var chunks = [];
+          if (!rows || !rows.length) return chunks;
+          var start = 0;
+          while (start < rows.length) {
+            var runStart = start;
+            var runEnd = start;
+            while (runEnd + 1 < rows.length && rows[runEnd + 1] === rows[runEnd] + 1) {
+              runEnd++;
+            }
+            var i = runStart;
+            while (i <= runEnd) {
+              var sliceEnd = Math.min(i + maxChunk - 1, runEnd);
+              chunks.push(rows.slice(i, sliceEnd + 1));
+              i = sliceEnd + 1;
+            }
+            start = runEnd + 1;
+          }
+          return chunks;
+        }
+
+        var rowChunks = buildRowChunks_(rowNumbers, 20);
+        var chunkIndex = 0;
+
+        // 順番に送信（連続行チャンク単位）
+        function sendNext() {
+          if (chunkIndex >= rowChunks.length) {
+            // 全部送信完了
+            // 送信完了時に状態をリセット
+            state.saving = false;
+            
+            if (errorCount === 0) {
+              // 全部成功したらlocalStorageクリア
+              try {
+                localStorage.removeItem(key);
+                // state.pendingEditsからも削除
+                for (var i = 0; i < rowNumbers.length; i++) {
+                  var stateKey = spreadsheetId + ':' + sheetName + ':' + String(rowNumbers[i]);
+                  delete state.pendingEdits[stateKey];
+                }
+                state.dirty = false;
+                if (isAuto) {
+                  setStatus('自動保存完了（' + totalCount + '件）', 'ok');
+                } else {
+                  setStatus('保存済み（' + totalCount + '件送信完了）', 'ok');
+                }
+              } catch (err) {
+                console.error('localStorage削除エラー:', err);
+                setStatus('保存完了（ただしクリアに失敗）', 'error');
+              }
+            } else {
+              // 一部失敗
+              if (isAuto) {
+                setStatus('自動保存完了（成功: ' + successCount + '件、失敗: ' + errorCount + '件）', 'error');
+              } else {
+                setStatus('送信完了（成功: ' + successCount + '件、失敗: ' + errorCount + '件）', 'error');
+              }
+            }
+            if (els.navFlush) {
+              els.navFlush.disabled = false;
+              els.navFlush.textContent = 'まとめて保存';
+            }
+
+            // ★要望対応: まとめて保存後に採点対象スプシのデータを読み込みなおす
+            // - currentRowNumber を維持して再描画（可能なら同じ行に戻す）
+            loadInitData(currentRowNumber);
+            
+            // 送信完了後、差分があればタイマーを再設定
+            resetAutoFlushTimer();
+            return;
+          }
+
+          var chunk = rowChunks[chunkIndex] || [];
+          var rowsPayload = [];
+          for (var i = 0; i < chunk.length; i++) {
+            var rowNumber = chunk[i];
+            var rowData = draftData[String(rowNumber)];
+            if (!rowData) continue;
+            rowsPayload.push({
+              rowNumber: rowNumber,
+              scores: rowData.scores || [],
+              comment: rowData.comment || '',
+              ruleOutputs: (rowData.ruleOutputs && Array.isArray(rowData.ruleOutputs)) ? rowData.ruleOutputs : [rowData.comment || '']
+            });
+          }
+          if (!rowsPayload.length) {
+            chunkIndex++;
+            sendNext();
+            return;
+          }
+
+          var payload = {
+            sheetName: sheetName,
+            rows: rowsPayload
+          };
+
+          // apiSaveRowsを呼び出す
+          google.script.run
+            .withSuccessHandler(function (res) {
+              if (res && res.results && Array.isArray(res.results)) {
+                res.results.forEach(function (r) {
+                  if (r && r.ok) {
+                    successCount++;
+                    if (r.rowNumber != null) {
+                      removePendingEditFromLocalStorage(sheetName, r.rowNumber);
+                      delete draftData[String(r.rowNumber)];
+                    }
+                  } else {
+                    errorCount++;
+                  }
+                });
+              } else if (res && res.ok) {
+                // 互換: okのみ返された場合は全件成功扱い
+                for (var k = 0; k < rowsPayload.length; k++) {
+                  successCount++;
+                  removePendingEditFromLocalStorage(sheetName, rowsPayload[k].rowNumber);
+                  delete draftData[String(rowsPayload[k].rowNumber)];
+                }
+              } else {
+                errorCount += rowsPayload.length;
+              }
+              chunkIndex++;
+              sendNext();
+            })
+            .withFailureHandler(function (err) {
+              console.error('送信エラー (チャンク):', err);
+              errorCount += rowsPayload.length;
+              chunkIndex++;
+              sendNext();
+            })
+            .apiSaveRows(payload);
+        }
+
+        // 送信開始
+        sendNext();
+      }
+
+      function loadInitData(preferredRowNumber) {
+        if (!state.config) return;
+        // 可能なら同じ行番号を維持して再描画（表示列変更などで再読み込みしても位置が飛びにくい）
+        var keepRowNumber = null;
+        if (preferredRowNumber !== undefined && preferredRowNumber !== null && preferredRowNumber !== '') {
+          var n = Number(preferredRowNumber);
+          if (isFinite(n) && n > 0) keepRowNumber = n;
+        }
+        var startFromLast = !!(els.startFromLastRowCheckbox ? els.startFromLastRowCheckbox.checked : (state.config && state.config.startFromLastRow));
+        state.startRow = normalizeStartRow_(els.startRowInput.value || state.config.startRow || 2);
+        var params = {
+          sheetName: state.currentSheet || state.config.sheetName,
+          startRow: state.startRow
+        };
+        setStatus('読み込み中...', 'info');
+        google.script.run
+          .withSuccessHandler(function (res) {
+            state.rows = res.rows || [];
+            state.config = res.config || state.config;
+            state.headers = res.headers || [];
+            state.allHeaders = res.allHeaders || [];
+            state.headerRow = res && res.headerRow ? Number(res.headerRow) : (state.config && state.config.headerRow ? Number(state.config.headerRow) : 1);
+            state.currentSheet = res.sheetName || params.sheetName;
+            if (els.settingsModal && els.settingsModal.style.display !== 'none') {
+              refreshHeaderSelectOptions_(state.config);
+            } else {
+              fillSettingsForm(state.config);
+            }
+            var nextIndex = 0;
+            if (startFromLast && state.rows && state.rows.length) {
+              nextIndex = state.rows.length - 1;
+            } else if (keepRowNumber != null && state.rows && state.rows.length) {
+              for (var i = 0; i < state.rows.length; i++) {
+                if (Number(state.rows[i].rowNumber) === keepRowNumber) {
+                  nextIndex = i;
+                  break;
+                }
+              }
+            }
+            state.currentIndex = nextIndex;
+            applySlotLabelsToUI_(state.config);
+            // 講評/改善点の出力枠を反映（列設定変更に追従）
+            applyRuleOutputSlotsToUI_(resolveRuleOutputSlots_(state.config || {}, state.currentRules || [], state.currentRulesHeaders || []));
+
+            if (els.applyStartBtn) els.applyStartBtn.disabled = false;
+            if (els.navPrev) els.navPrev.disabled = (state.rows.length === 0);
+            if (els.navNext) els.navNext.disabled = (state.rows.length === 0);
+
+            // シート選択の反映
+            if (state.sheetNames.length && els.sheetSelect.value !== state.currentSheet) {
+              els.sheetSelect.value = state.currentSheet;
+            }
+
+            renderCurrentRow();
+            setStatus(state.rows.length ? '読み込み完了' : 'データなし', 'ok');
+          })
+          .withFailureHandler(function (err) {
+            setStatus('読み込みエラー: ' + (err && err.message ? err.message : err), 'error');
+          })
+          .apiGetInitData(params);
+      }
+
+      // カンマ区切りの列指定（半角, 全角， 日本語、）を配列へ
+      function getAllHeaders_() {
+        return Array.isArray(state.allHeaders) ? state.allHeaders : [];
+      }
+
+      function getColByHeaderLabel_(label) {
+        var v = String(label == null ? '' : label).trim();
+        if (!v) return '';
+        var list = getAllHeaders_();
+        for (var i = 0; i < list.length; i++) {
+          var l = String(list[i].label || list[i].header || '').trim();
+          if (l && l === v) return String(list[i].col || '').trim().toUpperCase();
+        }
+        // フォールバック: "(n)" を除去して先頭一致
+        var base = v.replace(/\s*\(\d+\)$/, '').trim();
+        if (!base) return '';
+        for (var j = 0; j < list.length; j++) {
+          var h = String(list[j].header || '').trim();
+          if (h && h === base) return String(list[j].col || '').trim().toUpperCase();
+        }
+        return '';
+      }
+
+      function getHeaderLabelByCol_(col) {
+        var c = String(col == null ? '' : col).trim().toUpperCase();
+        if (!c) return '';
+        var list = getAllHeaders_();
+        for (var i = 0; i < list.length; i++) {
+          var lc = String(list[i].col || '').trim().toUpperCase();
+          if (lc && lc === c) return String(list[i].label || list[i].header || '').trim();
+        }
+        return '';
+      }
+
+      function setSelectOptions_(select, selectedLabel) {
+        if (!select) return;
+        var current = String(selectedLabel == null ? select.value || '' : selectedLabel);
+        var list = getAllHeaders_();
+        select.innerHTML = '';
+        var emptyOpt = document.createElement('option');
+        emptyOpt.value = '';
+        emptyOpt.textContent = '';
+        select.appendChild(emptyOpt);
+        for (var i = 0; i < list.length; i++) {
+          var label = String(list[i].label || list[i].header || '').trim();
+          if (!label) continue;
+          var opt = document.createElement('option');
+          opt.value = label;
+          opt.textContent = label;
+          select.appendChild(opt);
+        }
+        select.value = current || '';
+      }
+
+      function refreshHeaderSelectOptions_(config) {
+        var cfg = config || {};
+        if (els.nameHeaderSelect) {
+          var nameFallback = (cfg && cfg.nameHeader) ? String(cfg.nameHeader).trim() : getHeaderLabelByCol_(cfg && cfg.nameCol);
+          var nameValue = String(els.nameHeaderSelect.value || '').trim() || nameFallback;
+          setSelectOptions_(els.nameHeaderSelect, nameValue);
+        }
+        var displayHeaders = (cfg && Array.isArray(cfg.displayHeaders)) ? cfg.displayHeaders : [];
+        var displayCols = (cfg && Array.isArray(cfg.displayCols)) ? cfg.displayCols : [];
+        (els.displayHeaderSelects || []).forEach(function (sel, idx) {
+          var fallback = (displayHeaders[idx] || '') ? String(displayHeaders[idx]).trim() : getHeaderLabelByCol_(displayCols[idx]);
+          var value = String(sel && sel.value ? sel.value : '').trim() || fallback;
+          setSelectOptions_(sel, value);
+        });
+        var scoreHeaders = (cfg && Array.isArray(cfg.scoreHeaders)) ? cfg.scoreHeaders : [];
+        var scoreCols = (cfg && Array.isArray(cfg.scoreCols)) ? cfg.scoreCols : [];
+        (els.scoreHeaderSelects || []).forEach(function (sel, idx) {
+          var fallback = (scoreHeaders[idx] || '') ? String(scoreHeaders[idx]).trim() : getHeaderLabelByCol_(scoreCols[idx]);
+          var value = String(sel && sel.value ? sel.value : '').trim() || fallback;
+          setSelectOptions_(sel, value);
+        });
+        (els.ruleOutColInputs || []).forEach(function (sel, idx) {
+          var slots = (cfg && Array.isArray(cfg.ruleOutputSlots)) ? cfg.ruleOutputSlots : [];
+          var slot = slots[idx] || {};
+          var fallback = slot && slot.header ? String(slot.header).trim() : getHeaderLabelByCol_(slot && slot.col);
+          var value = String(sel && sel.value ? sel.value : '').trim() || fallback;
+          setSelectOptions_(sel, value);
+        });
+      }
+
+      function fillSettingsForm(config) {
+        // ヘッダ行（未指定は 1）
+        if (els.headerRowInput) {
+          var hr = Number(config && config.headerRow);
+          if (!isFinite(hr) || hr < 1) hr = 1;
+          els.headerRowInput.value = String(hr);
+        }
+        refreshHeaderSelectOptions_(config);
+
+        // 生徒名の列（ヘッダ）
+        if (els.nameHeaderSelect) {
+          var nameLabel = (config && config.nameHeader) ? String(config.nameHeader).trim() : getHeaderLabelByCol_(config && config.nameCol);
+          els.nameHeaderSelect.value = nameLabel || '';
+        }
+
+        // 採点画面表示列（ヘッダ）5枠
+        var displayHeaders = (config && Array.isArray(config.displayHeaders)) ? config.displayHeaders : [];
+        var displayCols = (config && Array.isArray(config.displayCols)) ? config.displayCols : [];
+        (els.displayHeaderSelects || []).forEach(function (sel, idx) {
+          var label = displayHeaders[idx] ? String(displayHeaders[idx]).trim() : getHeaderLabelByCol_(displayCols[idx]);
+          if (sel) sel.value = label || '';
+        });
+        
+        // 採点入力列（ヘッダ）5枠
+        var scoreHeaders = (config && Array.isArray(config.scoreHeaders)) ? config.scoreHeaders : [];
+        var scoreCols = (config && Array.isArray(config.scoreCols)) ? config.scoreCols : [];
+        (els.scoreHeaderSelects || []).forEach(function (sel, idx) {
+          var label = scoreHeaders[idx] ? String(scoreHeaders[idx]).trim() : getHeaderLabelByCol_(scoreCols[idx]);
+          if (sel) sel.value = label || '';
+        });
+        
+        // ルール出力枠（最大3）は解決関数でまとめて反映
+        applyRuleOutputSlotsToUI_(resolveRuleOutputSlots_(config || {}, [], []));
+        if (els.ruleTemplateSelect) {
+          els.ruleTemplateSelect.value = config.ruleTemplateId || '';
+        }
+        
+        // 旧キー警告の表示
+        if (config._deprecationWarning) {
+          els.settingsStatus.textContent = '⚠ ' + config._deprecationWarning;
+          els.settingsStatus.style.color = '#d32f2f';
+        }
+        
+        // UI上部の項目名（slotLabels）を反映
+        applySlotLabelsToUI_(config);
+        validateScoreColsBeforeSave_();
+      }
+
+      function findDuplicateCols_(cols) {
+        var seen = {};
+        var dups = [];
+        (cols || []).forEach(function (col) {
+          var c = String(col == null ? '' : col).trim().toUpperCase();
+          if (!c) return;
+          if (seen[c]) {
+            if (dups.indexOf(c) < 0) dups.push(c);
+          } else {
+            seen[c] = true;
+          }
+        });
+        return dups;
+      }
+
+      function getScoreColsFromSettings_() {
+        var scoreCols = [];
+        (els.scoreHeaderSelects || []).forEach(function (sel) {
+          var label = String(sel && sel.value ? sel.value : '').trim();
+          scoreCols.push(label ? getColByHeaderLabel_(label) : '');
+        });
+        while (scoreCols.length < 5) scoreCols.push('');
+        return scoreCols;
+      }
+
+      function validateScoreColsBeforeSave_() {
+        if (!els.scoreColsError) return true;
+        var dups = findDuplicateCols_(getScoreColsFromSettings_());
+        if (dups.length) {
+          els.scoreColsError.textContent = '採点値入力列が重複しています: ' + dups.join(', ');
+          els.scoreColsError.style.display = 'block';
+          return false;
+        }
+        els.scoreColsError.textContent = '';
+        els.scoreColsError.style.display = 'none';
+        return true;
+      }
+
+      function saveConfig() {
+        // 採点入力列（ヘッダ）を5枠から配列に組み立て
+        var scoreHeaders = [];
+        var scoreCols = [];
+        (els.scoreHeaderSelects || []).forEach(function (sel) {
+          var label = String(sel && sel.value ? sel.value : '').trim();
+          scoreHeaders.push(label);
+          scoreCols.push(label ? getColByHeaderLabel_(label) : '');
+        });
+        while (scoreHeaders.length < 5) scoreHeaders.push('');
+        while (scoreCols.length < 5) scoreCols.push('');
+        var duplicatedScoreCols = findDuplicateCols_(scoreCols);
+        if (duplicatedScoreCols.length) {
+          if (els.scoreColsError) {
+            els.scoreColsError.textContent = '採点値入力列が重複しています: ' + duplicatedScoreCols.join(', ');
+            els.scoreColsError.style.display = 'block';
+          }
+          els.settingsStatus.textContent = '保存エラー: 採点値入力列が重複しています: ' + duplicatedScoreCols.join(', ');
+          els.settingsStatus.style.color = '#d32f2f';
+          return;
+        }
+        if (els.scoreColsError) {
+          els.scoreColsError.textContent = '';
+          els.scoreColsError.style.display = 'none';
+        }
+        
+        // displayCols（ヘッダ）を5枠から配列に組み立て
+        var displayHeaders = [];
+        var displayCols = [];
+        (els.displayHeaderSelects || []).forEach(function (sel) {
+          var label = String(sel && sel.value ? sel.value : '').trim();
+          displayHeaders.push(label);
+          displayCols.push(label ? getColByHeaderLabel_(label) : '');
+        });
+        while (displayHeaders.length < 5) displayHeaders.push('');
+        while (displayCols.length < 5) displayCols.push('');
+        
+        var cfg = state.config || {};
+        var oldDisplayColsKey = (cfg && Array.isArray(cfg.displayCols)) ? cfg.displayCols.join(',') : '';
+        var oldHeaderRow = Number(cfg && cfg.headerRow);
+        if (!isFinite(oldHeaderRow) || oldHeaderRow < 1) oldHeaderRow = 1;
+        var oldRuleOutKey = '';
+        try {
+          var oldSlots = (state.config && Array.isArray(state.config.ruleOutputSlots)) ? state.config.ruleOutputSlots : [];
+          oldRuleOutKey = JSON.stringify(oldSlots.map(function (s) {
+            return { target: String(s && s.target || ''), col: String(s && s.col || ''), header: String(s && s.header || ''), enabled: !!(s && s.enabled) };
+          }));
+        } catch (e) {
+          oldRuleOutKey = '';
+        }
+        var currentRowNumber = (state.rows && state.rows.length && state.rows[state.currentIndex]) ? state.rows[state.currentIndex].rowNumber : null;
+        cfg.ruleTemplateId = els.ruleTemplateSelect ? els.ruleTemplateSelect.value : (cfg.ruleTemplateId || '');
+        // headerRow: 未入力/不正は 1
+        if (els.headerRowInput) {
+          var hrRaw = String(els.headerRowInput.value || '').trim();
+          var hr = hrRaw ? Number(hrRaw) : 1;
+          if (!isFinite(hr) || hr < 1) hr = 1;
+          cfg.headerRow = hr;
+        } else {
+          cfg.headerRow = 1;
+        }
+        var nameHeader = els.nameHeaderSelect ? String(els.nameHeaderSelect.value || '').trim() : '';
+        cfg.nameHeader = nameHeader;
+        cfg.nameCol = nameHeader ? getColByHeaderLabel_(nameHeader) : '';
+        cfg.displayHeaders = displayHeaders;
+        cfg.displayCols = displayCols;
+        cfg.scoreHeaders = scoreHeaders;
+        cfg.scoreCols = scoreCols;
+        cfg.startRow = normalizeStartRow_(els.startRowInput ? els.startRowInput.value : cfg.startRow);
+
+        // ルール出力枠（最大3）を設定に反映
+        var resolvedSlots = state.ruleOutputSlotsResolved || resolveRuleOutputSlots_(cfg, state.currentRules || [], state.currentRulesHeaders || []);
+        var newRuleOutputSlots = [];
+        var enabledCount = 0;
+        var colCount = 0;
+        for (var i = 0; i < 3; i++) {
+          var baseSlot = resolvedSlots[i] || { target: '', col: '', enabled: false };
+          var target = String(baseSlot.target || '').trim();
+          var headerLabel = (els.ruleOutColInputs && els.ruleOutColInputs[i] && els.ruleOutColInputs[i].value)
+            ? String(els.ruleOutColInputs[i].value).trim()
+            : '';
+          var col = headerLabel ? getColByHeaderLabel_(headerLabel) : '';
+          var enabled = !!(els.ruleOutEnableInputs && els.ruleOutEnableInputs[i] && els.ruleOutEnableInputs[i].checked);
+
+          // targetが空の枠は未使用
+          if (!target) {
+            enabled = false;
+            col = '';
+            headerLabel = '';
+          }
+          if (enabled) enabledCount++;
+          if (col) colCount++;
+          if (target || col || enabled || headerLabel) {
+            newRuleOutputSlots.push({ target: target, col: col, enabled: enabled, header: headerLabel });
+          }
+        }
+        cfg.ruleOutputSlots = newRuleOutputSlots;
+
+        // 後方互換: commentCol は slot1 の列として保持
+        cfg.commentCol = (newRuleOutputSlots[0] && newRuleOutputSlots[0].col) ? String(newRuleOutputSlots[0].col) : '';
+        cfg.commentHeader = (newRuleOutputSlots[0] && newRuleOutputSlots[0].header) ? String(newRuleOutputSlots[0].header) : '';
+
+        // 保存時警告（不足していても保存は継続）
+        if (els.ruleOutSaveWarn) {
+          if (enabledCount > colCount) {
+            els.ruleOutSaveWarn.textContent = '⚠ 編集有効化の数に対して、講評/改善点入力列の指定が不足しています（指定済みの枠だけ駆動します）';
+            els.ruleOutSaveWarn.style.display = 'block';
+          } else {
+            els.ruleOutSaveWarn.style.display = 'none';
+          }
+        }
+
+        els.settingsStatus.textContent = '保存中...';
+        els.settingsStatus.style.color = '';
+        // 設定保存前のテンプレIDを保存（変更検出用）
+        var oldTemplateId = (state.config && state.config.ruleTemplateId) ? String(state.config.ruleTemplateId).trim() : '';
+        var newTemplateId = cfg.ruleTemplateId ? String(cfg.ruleTemplateId).trim() : '';
+        
+        google.script.run
+          .withSuccessHandler(function (saved) {
+            state.config = saved;
+            applySlotLabelsToUI_(saved);
+            // 保存結果で出力枠を再反映（target名や有効化状態のズレを防ぐ）
+            applyRuleOutputSlotsToUI_(resolveRuleOutputSlots_(saved || {}, state.currentRules || [], state.currentRulesHeaders || []));
+            els.settingsStatus.textContent = '保存しました';
+            
+            // テンプレIDが変更された場合はルールを一括ロード
+            var savedTemplateId = (saved && saved.ruleTemplateId) ? String(saved.ruleTemplateId).trim() : '';
+            if (savedTemplateId !== oldTemplateId) {
+              clearCurrentTemplate();
+              if (savedTemplateId) {
+                loadCurrentTemplateRules(savedTemplateId);
+              }
+            }
+
+            // 表示列が変更された場合、採点データを再読み込みして反映（現在行は維持）
+            var newDisplayColsKey = (saved && Array.isArray(saved.displayCols)) ? saved.displayCols.join(',') : '';
+            if (newDisplayColsKey !== oldDisplayColsKey) {
+              loadInitData(currentRowNumber);
+            }
+            // ヘッダ行が変更された場合も再読み込み（見出しを最新にする）
+            var newHeaderRow = Number(saved && saved.headerRow);
+            if (!isFinite(newHeaderRow) || newHeaderRow < 1) newHeaderRow = 1;
+            if (newHeaderRow !== oldHeaderRow) {
+              loadInitData(currentRowNumber);
+            }
+            // 講評/改善点列（出力枠）が変更された場合も再読み込み（表示値を最新にする）
+            try {
+              var newSlots = (saved && Array.isArray(saved.ruleOutputSlots)) ? saved.ruleOutputSlots : [];
+              var newRuleOutKey = JSON.stringify(newSlots.map(function (s) {
+                return { target: String(s && s.target || ''), col: String(s && s.col || ''), header: String(s && s.header || ''), enabled: !!(s && s.enabled) };
+              }));
+              if (newRuleOutKey !== oldRuleOutKey) {
+                loadInitData(currentRowNumber);
+              }
+            } catch (e) {}
+          })
+          .withFailureHandler(function (err) {
+            els.settingsStatus.textContent = '保存エラー: ' + (err && err.message ? err.message : err);
+          })
+          .apiSetConfig(cfg);
+      }
+
+      function exportConfig() {
+        if (!state.config) {
+          els.exportResult.textContent = 'エラー: 設定が読み込まれていません';
+          els.exportResult.style.display = 'block';
+          els.exportResult.style.color = '#d32f2f';
+          return;
+        }
+        
+        els.exportResult.textContent = 'エクスポート中...';
+        els.exportResult.style.display = 'block';
+        els.exportResult.style.color = '#666';
+        
+        google.script.run
+          .withSuccessHandler(function (result) {
+            var json = JSON.stringify(result, null, 2);
+            // クリップボードにコピー
+            var textarea = document.createElement('textarea');
+            textarea.value = json;
+            textarea.style.position = 'fixed';
+            textarea.style.opacity = '0';
+            document.body.appendChild(textarea);
+            textarea.select();
+            try {
+              document.execCommand('copy');
+              els.exportResult.textContent = 'エクスポート完了（クリップボードにコピーしました）';
+              els.exportResult.style.color = '#2e7d32';
+            } catch (e) {
+              els.exportResult.textContent = 'エクスポート完了（コピーに失敗しました。下記を手動でコピーしてください）:\n\n' + json;
+              els.exportResult.style.color = '#666';
+            }
+            document.body.removeChild(textarea);
+          })
+          .withFailureHandler(function (err) {
+            els.exportResult.textContent = 'エクスポートエラー: ' + (err && err.message ? err.message : err);
+            els.exportResult.style.color = '#d32f2f';
+          })
+          .apiExportConfig();
+      }
+
+      function handleImportConfigFile_(ev) {
+        var file = ev && ev.target && ev.target.files && ev.target.files[0] ? ev.target.files[0] : null;
+        if (!file) return;
+
+        var reader = new FileReader();
+        reader.onload = function (e) {
+          var text = String((e && e.target && e.target.result) || '');
+          var payload = null;
+          try {
+            payload = JSON.parse(text);
+          } catch (err) {
+            els.exportResult.textContent = 'インポートエラー: JSONの形式が不正です';
+            els.exportResult.style.display = 'block';
+            els.exportResult.style.color = '#d32f2f';
+            return;
+          }
+
+          if (!window.confirm('現在の画面上設定をインポート内容で上書きします（検証に通った場合のみ反映）。続行しますか？')) {
+            return;
+          }
+
+          els.exportResult.textContent = 'インポート中...';
+          els.exportResult.style.display = 'block';
+          els.exportResult.style.color = '#666';
+
+          google.script.run
+            .withSuccessHandler(function () {
+              els.exportResult.textContent = 'インポート完了';
+              els.exportResult.style.color = '#2e7d32';
+              initSheetsAndConfig();
+            })
+            .withFailureHandler(function (err2) {
+              els.exportResult.textContent = 'インポートエラー: ' + (err2 && err2.message ? err2.message : err2);
+              els.exportResult.style.color = '#d32f2f';
+            })
+            .apiImportConfig(payload);
+        };
+        reader.onerror = function () {
+          els.exportResult.textContent = 'インポートエラー: ファイルを読み込めませんでした';
+          els.exportResult.style.display = 'block';
+          els.exportResult.style.color = '#d32f2f';
+        };
+        reader.readAsText(file, 'UTF-8');
+      }
+
+      function restoreLatestConfigBackup() {
+        if (!window.confirm('直近のバックアップ設定に復元します。続行しますか？')) {
+          return;
+        }
+        els.exportResult.textContent = '復元中...';
+        els.exportResult.style.display = 'block';
+        els.exportResult.style.color = '#666';
+
+        google.script.run
+          .withSuccessHandler(function () {
+            els.exportResult.textContent = '復元完了';
+            els.exportResult.style.color = '#2e7d32';
+            initSheetsAndConfig();
+          })
+          .withFailureHandler(function (err) {
+            els.exportResult.textContent = '復元エラー: ' + (err && err.message ? err.message : err);
+            els.exportResult.style.color = '#d32f2f';
+          })
+          .apiRestoreLatestConfigBackup();
+      }
+
+
+      // localStorageから全pendingEditsを読み込む（ページ読み込み時に復元）
+      // キー形式 `gradingDraft:{spreadsheetId}:{sheetName}` に対応
+      function loadAllPendingEditsFromLocalStorage() {
+        state.pendingEdits = {};
+        try {
+          for (var i = 0; i < localStorage.length; i++) {
+            var key = localStorage.key(i);
+            // キー形式 `gradingDraft:{spreadsheetId}:{sheetName}` をチェック
+            if (key && key.startsWith('gradingDraft:')) {
+              try {
+                // キーから spreadsheetId と sheetName を抽出
+                var parts = key.split(':');
+                if (parts.length >= 3) {
+                  var spreadsheetId = parts[1] || 'unknown';
+                  var sheetName = parts.slice(2).join(':'); // sheetNameに':'が含まれる可能性を考慮
+                  
+                  // 辞書形式のデータを読み込む
+                  var draftData = JSON.parse(localStorage.getItem(key));
+                  if (draftData && typeof draftData === 'object') {
+                    // 各行のデータをstate.pendingEditsに追加
+                    for (var rowKey in draftData) {
+                      if (draftData.hasOwnProperty(rowKey)) {
+                        var rowData = draftData[rowKey];
+                        var stateKey = spreadsheetId + ':' + sheetName + ':' + rowKey;
+                        state.pendingEdits[stateKey] = {
+                          spreadsheetId: spreadsheetId,
+                          sheetName: sheetName,
+                          rowNumber: parseInt(rowKey, 10) || 0,
+                          scores: rowData.scores || [],
+                          comment: rowData.comment || '',
+                          ruleOutputs: (rowData && Array.isArray(rowData.ruleOutputs)) ? rowData.ruleOutputs : [rowData.comment || ''],
+                          updatedAt: rowData.updatedAt || 0
+                        };
+                      }
+                    }
+                  }
+                }
+              } catch (err) {
+                // 無効なデータはスキップ
+                console.warn('localStorageのキー "' + key + '" の読み込みエラー:', err);
+              }
+            }
+          }
+        } catch (err) {
+          console.error('localStorage全体の読み込みエラー:', err);
+        }
+      }
+
+      function initSheetsAndConfig() {
+        setStatus('初期化中...', 'info');
+        
+        // localStorageから全pendingEditsを読み込む（ページ読み込み時に復元）
+        loadAllPendingEditsFromLocalStorage();
+        
+        // Config/Rules先行で実行（採点対象スプシに依存しない）
+        google.script.run
+          .withSuccessHandler(function (cfg) {
+            state.config = cfg;
+            els.startRowInput.value = cfg.startRow || 2;
+            fillSettingsForm(cfg);
+            applySlotLabelsToUI_(cfg);
+            // ルール出力スロット（初期は設定のみで解決）
+            applyRuleOutputSlotsToUI_(resolveRuleOutputSlots_(cfg, [], []));
+            if (!state.colChecksFromConfigApplied && cfg && Array.isArray(cfg.colChecks)) {
+              applyColChecksToUI_(cfg.colChecks);
+              state.colChecksFromConfigApplied = true;
+            }
+            if (els.startFromLastRowCheckbox && typeof cfg.startFromLastRow === 'boolean') {
+              els.startFromLastRowCheckbox.checked = !!cfg.startFromLastRow;
+              saveUiPrefs_({ startFromLastRow: !!cfg.startFromLastRow });
+            }
+            hydrateSpreadsheetUrlFromServer_();
+            
+            // テンプレ一覧を取得（採点対象未設定でも成功しうる）
+            // 注意: renderRulesSummaryはloadRuleTemplates_の成功ハンドラ内で呼び出される
+            loadRuleTemplates_(cfg.ruleTemplateId);
+            
+            // タイトルを更新（テンプレ読み込み完了後にも更新される）
+            updateRulesPanelTitle_();
+            
+            // 採点対象スプシのシート一覧を並行取得（失敗してもテンプレ表示は維持）
+            google.script.run
+              .withSuccessHandler(function (names) {
+                state.sheetNames = names || [];
+                els.sheetSelect.innerHTML = '';
+                state.sheetNames.forEach(function (name, idx) {
+                  var opt = document.createElement('option');
+                  opt.value = name;
+                  opt.textContent = name;
+                  els.sheetSelect.appendChild(opt);
+                  if (idx === 0) state.currentSheet = state.currentSheet || name;
+                });
+
+                // 採点対象スプシが設定済みなら「採点スプシへ」を有効化
+                if (els.navOpenTargetSpreadsheet) {
+                  els.navOpenTargetSpreadsheet.disabled = (state.sheetNames.length === 0);
+                }
+                
+                if (!state.currentSheet && cfg.sheetName) {
+                  state.currentSheet = cfg.sheetName;
+                }
+                if (state.currentSheet) {
+                  els.sheetSelect.value = state.currentSheet;
+                }
+                
+                loadInitData();
+                setStatus('読み込み完了', 'ok');
+              })
+              .withFailureHandler(function (err) {
+                setStatus('シート一覧取得エラー: ' + (err && err.message ? err.message : err), 'error');
+                // 採点対象未設定の可能性が高いので採点操作を無効化
+                if (els.navPrev) els.navPrev.disabled = true;
+                if (els.navNext) els.navNext.disabled = true;
+                if (els.applyStartBtn) els.applyStartBtn.disabled = true;
+                if (els.navOpenTargetSpreadsheet) els.navOpenTargetSpreadsheet.disabled = true;
+                // シート一覧取得失敗してもテンプレは表示維持（設定用スプシ参照のため）
+              })
+              .apiGetSheets();
+          })
+          .withFailureHandler(function (err) {
+            setStatus('設定取得エラー: ' + (err && err.message ? err.message : err), 'error');
+          })
+          .apiGetConfig();
+      }
+
+      function onLoad() {
+        initElements();
+        bindEvents();
+        initSheetsAndConfig();
+      }
+
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', onLoad);
+      } else {
+        onLoad();
+      }
+    })();
+  </script>
+</body>
+</html>

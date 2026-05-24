@@ -1,0 +1,232 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <base target="_top">
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 8px; font-size: 14px; }
+    .panel { border: 1px solid #ddd; border-radius: 10px; padding: 8px; }
+    textarea { width: 100%; height: 96px; box-sizing: border-box; padding: 6px; }
+    .row { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0; }
+    /* 電卓風（省スペース）：3列グリッド＋隙間0（必要な行だけに付ける） */
+    .row.keypad3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; }
+    .row.keypad3 > button { width: 100%; border-radius: 0; padding: 7px 0; }
+    .group { border: 0; border-radius: 0; padding: 0; margin: 8px 0 0; }
+    .group:first-child { margin-top: 0; }
+    .title { font-weight: 650; margin: 0 0 3px; font-size: 12px; }
+    button { padding: 5px 10px; border: 1px solid #ccc; border-radius: 10px; background: #fff; cursor: pointer; font-size: 14px; }
+    button.primary { background: #111; color: #fff; border-color: #111; }
+    button.warn { background: #b00020; color: #fff; border-color: #b00020; }
+    .hint { font-size: 12px; color: #555; line-height: 1.4; }
+    .status { font-size: 12px; margin-top: 4px; }
+  </style>
+</head>
+<body>
+  <div class="panel">
+  <div class="group">
+    <div class="title">式ウインドウ</div>
+    <textarea id="expr" placeholder="ここに whenExpr または message式（=...）を記述"></textarea>
+
+    <div class="row">
+      <button id="undoBtn">↩ 戻る</button>
+      <button id="redoBtn">↪ 進む</button>
+      <button id="copyBtn">コピー</button>
+      <button class="primary" id="pasteBtn">選択セルに貼り付け ↓</button>
+      <button class="warn" id="clearBtn">クリア</button>
+    </div>
+    <div class="status" id="status"></div>
+  </div>
+
+  <div class="group">
+    <div class="title">パラメータ</div>
+    <div class="row keypad3" id="vars"></div>
+  </div>
+
+  <div class="group">
+    <div class="title">条件（比較）</div>
+    <div class="row keypad3" id="cmps"></div>
+  </div>
+
+  <div class="group">
+    <div class="title">論理</div>
+    <div class="row keypad3" id="logics"></div>
+  </div>
+
+  <div class="group">
+    <div class="title">括弧</div>
+    <div class="row keypad3" id="parens"></div>
+  </div>
+
+  <div class="group">
+    <div class="title">数字ルール（メモ）</div>
+    <div class="hint">
+      ・whenExpr: `score1 >= 3 && score2 < 5` のように score1〜score5 の比較・論理条件を書く<br>
+      ・message式: 先頭を `=` にして式評価（例: `=label1 & "：" & map(score1,"1=×,2=△,3=○")`）<br>
+      ・連結は `&` を使用（文字列は `"..."`）<br>
+      ・message式の `+` は数値加算。whenExprの加算条件は v0.1.0 では正式仕様外<br>
+      ・先頭を `'` にすると文字列として扱う（例: `'=score1+score2`）
+    </div>
+  </div>
+
+<script>
+  const exprEl = document.getElementById('expr');
+  const statusEl = document.getElementById('status');
+
+  // --- 履歴管理 ---
+  const history = [];
+  let histIdx = -1;
+  let inputTimer = null;
+
+  function pushHistory(value) {
+    // 同じなら積まない
+    if (histIdx >= 0 && history[histIdx] === value) return;
+    // 未来を切る
+    history.splice(histIdx + 1);
+    history.push(value);
+    histIdx = history.length - 1;
+    updateUndoRedoState();
+  }
+
+  function setExpr(value, moveCursorToEnd = true) {
+    exprEl.value = value;
+    if (moveCursorToEnd) {
+      const p = value.length;
+      exprEl.setSelectionRange(p, p);
+    }
+  }
+
+  function updateUndoRedoState() {
+    document.getElementById('undoBtn').disabled = (histIdx <= 0);
+    document.getElementById('redoBtn').disabled = (histIdx >= history.length - 1);
+  }
+
+  function scheduleHistoryPush() {
+    clearTimeout(inputTimer);
+    inputTimer = setTimeout(() => pushHistory(exprEl.value), 400);
+  }
+
+  exprEl.addEventListener('input', scheduleHistoryPush);
+
+  // 初期履歴
+  pushHistory('');
+
+  // --- カーソル位置に挿入 ---
+  function insertAtCursor(text) {
+    const v = exprEl.value;
+    const start = exprEl.selectionStart ?? v.length;
+    const end = exprEl.selectionEnd ?? v.length;
+    const next = v.slice(0, start) + text + v.slice(end);
+    exprEl.value = next;
+    const pos = start + text.length;
+    exprEl.setSelectionRange(pos, pos);
+    pushHistory(next);
+  }
+
+  // --- ボタン生成 ---
+  function mkBtn(label, onClick) {
+    const b = document.createElement('button');
+    b.textContent = label;
+    b.addEventListener('click', onClick);
+    return b;
+  }
+
+  // 変数：表示は人間語、挿入は実体
+  const VARS = [
+    { label: 'score1', token: 'score1' },
+    { label: 'score2', token: 'score2' },
+    { label: 'score3', token: 'score3' },
+    { label: 'score4', token: 'score4' },
+    { label: 'score5', token: 'score5' },
+    // 合計は実変数ではなく、message式向けのショートカットとして挿入する
+    { label: '合計(message)', token: '(score1 + score2 + score3 + score4 + score5)' },
+    { label: '連結', token: ' & ""' },
+    { label: '置換', token: 'map(score1,"1=×,2=△,3=○")' },
+  ];
+
+  const CMPS = [
+    { label: '=', token: ' == ' },
+    { label: '≠', token: ' != ' },
+    { label: '≧', token: ' >= ' },
+    { label: '>', token: ' > ' },
+    { label: '≦', token: ' <= ' },
+    { label: '<', token: ' < ' },
+  ];
+
+  const LOGICS = [
+    { label: 'AND', token: ' && ' },
+    { label: 'OR', token: ' || ' },
+    // NOT は事故りやすいので !( を推奨
+    { label: 'NOT', token: '!(' },
+  ];
+
+  const PARENS = [
+    { label: '（', token: '(' },
+    { label: '）', token: ')' },
+  ];
+
+  function renderButtons() {
+    const vars = document.getElementById('vars');
+    VARS.forEach(x => vars.appendChild(mkBtn(x.label, () => insertAtCursor(x.token))));
+
+    const cmps = document.getElementById('cmps');
+    CMPS.forEach(x => cmps.appendChild(mkBtn(x.label, () => insertAtCursor(x.token))));
+
+    const logics = document.getElementById('logics');
+    LOGICS.forEach(x => logics.appendChild(mkBtn(x.label, () => {
+      insertAtCursor(x.token);
+      // !( を入れたら最後に ) を足したい場合はここで補助できる（今は挿入のみ）
+    })));
+
+    const parens = document.getElementById('parens');
+    PARENS.forEach(x => parens.appendChild(mkBtn(x.label, () => insertAtCursor(x.token))));
+  }
+  renderButtons();
+
+  // --- 操作ボタン ---
+  document.getElementById('undoBtn').addEventListener('click', () => {
+    if (histIdx <= 0) return;
+    histIdx--;
+    setExpr(history[histIdx], true);
+    updateUndoRedoState();
+  });
+
+  document.getElementById('redoBtn').addEventListener('click', () => {
+    if (histIdx >= history.length - 1) return;
+    histIdx++;
+    setExpr(history[histIdx], true);
+    updateUndoRedoState();
+  });
+
+  document.getElementById('clearBtn').addEventListener('click', () => {
+    setExpr('', true);
+    pushHistory('');
+    statusEl.textContent = '';
+  });
+
+  document.getElementById('copyBtn').addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(exprEl.value);
+      statusEl.textContent = 'コピーしました。';
+    } catch (e) {
+      statusEl.textContent = 'コピーに失敗（ブラウザ制限の可能性）。手動でコピーしてください。';
+    }
+  });
+
+  document.getElementById('pasteBtn').addEventListener('click', () => {
+    const text = exprEl.value;
+
+    // ガードなし（必要なら {guardCol: 数字} を渡す）
+    google.script.run
+      .withSuccessHandler((res) => {
+        statusEl.textContent = res?.message || '完了';
+      })
+      .withFailureHandler((err) => {
+        statusEl.textContent = '失敗: ' + (err?.message || err);
+      })
+      .pasteToActiveCell(text /*, {guardCol: 7}*/);
+  });
+</script>
+  </div>
+</body>
+</html>

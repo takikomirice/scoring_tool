@@ -1,0 +1,14 @@
+# ローカル作業用設定
+.cursor/
+
+# Apps Script / clasp のローカル認証・プロジェクト設定
+.clasp.json
+.clasprc.json
+
+# 環境変数・秘密情報
+.env
+.env.*
+*.local
+credentials*.json
+service-account*.json
+secrets*.json
